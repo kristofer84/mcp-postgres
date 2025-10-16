@@ -17,8 +17,16 @@
     "database",
     "model-context-protocol"
   ],
-  "author": "Your Name",
+  "author": "Kristofer Nilsson",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kristofer84/mcp-postgres.git"
+  },
+  "homepage": "https://github.com/kristofer84/mcp-postgres#mcp-postgresql-server",
+  "bugs": {
+    "url": "https://github.com/kristofer84/mcp-postgres/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=18.0.0"

@@ -132,6 +132,7 @@ The server automatically detects AWS RDS endpoints (hosts containing `.rds.amazo
 2. **Caches the certificate** locally in `.aws-certs/` directory for 30 days
 3. **Configures SSL** with proper certificate validation using the downloaded bundle
 4. **Re-downloads** the certificate automatically if it's older than 30 days
+5. **Graceful fallback** to basic SSL if certificate download fails
 
 This means you can connect to AWS RDS instances without manually downloading or configuring SSL certificates. Simply provide your RDS endpoint and the server handles the rest:
 
@@ -143,7 +144,17 @@ DB_NAME=your_database
 # No need to set DB_SSL_MODE - automatically configured for RDS
 ```
 
-The auto-configuration ensures secure, verified connections to AWS RDS while maintaining convenience.
+**Features:**
+
+- **Persistent disk caching**: Certificate is saved to `.aws-certs/rds-global-bundle.pem` and persists between sessions
+- **30-day cache duration**: Certificate is automatically refreshed after 30 days
+- **Cache validation**: Verifies cached certificates aren't corrupted before use
+- **Connection retry**: Automatic retry logic with 3 attempts and 2-second delays
+- **Error handling**: Falls back to basic SSL if certificate download fails
+- **Performance**: Certificate is cached in memory after first read to avoid repeated file operations
+- **Cache monitoring**: Use the `check_certificate_cache` tool to view cache status
+
+The auto-configuration ensures secure, verified connections to AWS RDS while maintaining convenience and reliability.
 
 ## Available Tools
 
@@ -162,6 +173,26 @@ Gets database schema information including tables and columns.
 Executes a SQL query (SELECT statements only for safety).
 
 - Required parameter: `query` - The SQL SELECT query to execute
+
+### `describe_table`
+
+Get detailed information about a specific table including indexes and constraints.
+
+- Required parameter: `table_name` - Name of the table to describe
+
+### `get_table_sample`
+
+Gets a sample of rows from a table.
+
+- Required parameter: `table_name` - Name of the table to sample
+- Optional parameter: `limit` - Number of rows to return (default: 10, max: 100)
+
+### `check_certificate_cache`
+
+Checks the status of the AWS RDS certificate cache.
+
+- Shows cache location, age, expiration status, and file details
+- Useful for troubleshooting SSL connection issues with RDS
 
 ## Security
 
