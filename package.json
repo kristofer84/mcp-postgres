@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node server.mjs",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"No tests yet - server startup test runs in CI\""
   },
   "keywords": [
     "mcp",
