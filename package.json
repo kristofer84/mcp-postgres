@@ -4,7 +4,7 @@
   "description": "Model Context Protocol server for PostgreSQL database operations",
   "main": "server.mjs",
   "bin": {
-    "mcp-postgres": "./server.mjs"
+    "mcp-postgres": "server.mjs"
   },
   "scripts": {
     "start": "node server.mjs",
@@ -21,7 +21,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kristofer84/mcp-postgres"
+    "url": "git+https://github.com/kristofer84/mcp-postgres.git"
   },
   "homepage": "https://github.com/kristofer84/mcp-postgres#mcp-postgresql-server",
   "bugs": {
