@@ -7,13 +7,13 @@ A Model Context Protocol (MCP) server that provides PostgreSQL database access a
 You can use this MCP server with any MCP-compatible client by installing it via npm:
 
 ```bash
-npm install -g mcp-postgres-server
+npm install -g mcp-postgres
 ```
 
 Or run it directly with npx:
 
 ```bash
-npx mcp-postgres-server@latest
+npx mcp-postgres@latest
 ```
 
 ## Configuration
@@ -27,7 +27,7 @@ Add this to your MCP client configuration (e.g., `.kiro/settings/mcp.json`):
   "mcpServers": {
     "postgres": {
       "command": "npx",
-      "args": ["mcp-postgres-server@latest"],
+      "args": ["mcp-postgres@latest"],
       "env": {
         "DATABASE_URL": "postgresql://username:password@localhost:5432/database_name"
       },

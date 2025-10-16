@@ -1,10 +1,10 @@
 {
-  "name": "mcp-postgres-server",
+  "name": "mcp-postgres",
   "version": "1.0.0",
   "description": "Model Context Protocol server for PostgreSQL database operations",
   "main": "server.mjs",
   "bin": {
-    "mcp-postgres-server": "./server.mjs"
+    "mcp-postgres": "./server.mjs"
   },
   "scripts": {
     "start": "node server.mjs",
