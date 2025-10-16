@@ -62,7 +62,5 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Publish to npm with provenance
-        run: npm publish --provenance --access Cpublic
-- name: Publish to npm (trusted publishing)
-  run: npm publish --provenance --access public
+      - name: Publish to npm (trusted publishing)
+        run: npm publish --provenance --access public
