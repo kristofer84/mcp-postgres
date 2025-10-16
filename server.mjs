@@ -9,23 +9,9 @@ import { Client } from "pg";
 
 // Load configuration from multiple sources
 function loadConfig() {
-  // Try environment variables first
-  if (process.env.DATABASE_URL) {
-    const url = new URL(process.env.DATABASE_URL);
-    return {
-      db: {
-        host: url.hostname,
-        port: parseInt(url.port) || 5432,
-        user: url.username,
-        password: url.password,
-        database: url.pathname.slice(1)
-      }
-    };
-  }
-
-  // Try individual environment variables
-  if (process.env.DB_HOST || process.env.POSTGRES_HOST) {
-    return {
+  // Try individual environment variables first (preferred method)
+  if (process.env.DB_HOST || process.env.POSTGRES_HOST || process.env.DB_USER || process.env.POSTGRES_USER) {
+    const config = {
       db: {
         host: process.env.DB_HOST || process.env.POSTGRES_HOST || 'localhost',
         port: parseInt(process.env.DB_PORT || process.env.POSTGRES_PORT) || 5432,
@@ -34,12 +20,51 @@ function loadConfig() {
         database: process.env.DB_NAME || process.env.POSTGRES_DB || 'postgres'
       }
     };
+
+    // Add SSL configuration
+    const sslMode = process.env.DB_SSL_MODE || process.env.POSTGRES_SSL_MODE;
+    if (sslMode) {
+      config.db.ssl = sslMode === 'require' ? { rejectUnauthorized: false } : sslMode === 'disable' ? false : true;
+    }
+
+    return config;
+  }
+
+  // Fallback to DATABASE_URL if individual env vars not set
+  if (process.env.DATABASE_URL) {
+    const url = new URL(process.env.DATABASE_URL);
+    const config = {
+      db: {
+        host: url.hostname,
+        port: parseInt(url.port) || 5432,
+        user: url.username,
+        password: url.password,
+        database: url.pathname.slice(1)
+      }
+    };
+
+    // Check for SSL mode in URL search params or environment
+    const sslMode = url.searchParams.get('sslmode') || process.env.DB_SSL_MODE || process.env.POSTGRES_SSL_MODE;
+    if (sslMode) {
+      config.db.ssl = sslMode === 'require' ? { rejectUnauthorized: false } : sslMode === 'disable' ? false : true;
+    }
+
+    return config;
   }
 
   // Try config file in current directory
   const configPath = path.join(process.cwd(), 'config.json');
   if (fs.existsSync(configPath)) {
-    return JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+
+    // Process SSL mode if specified in config
+    if (config.db && config.db.sslmode) {
+      const sslMode = config.db.sslmode;
+      delete config.db.sslmode; // Remove sslmode property
+      config.db.ssl = sslMode === 'require' ? { rejectUnauthorized: false } : sslMode === 'disable' ? false : true;
+    }
+
+    return config;
   }
 
   // Default configuration
@@ -49,7 +74,8 @@ function loadConfig() {
       port: 5432,
       user: 'postgres',
       password: 'postgres',
-      database: 'postgres'
+      database: 'postgres',
+      ssl: false // Default to no SSL for local development
     }
   };
 }

@@ -29,7 +29,29 @@ Add this to your MCP client configuration (e.g., `.kiro/settings/mcp.json`):
       "command": "npx",
       "args": ["mcp-postgres@latest"],
       "env": {
-        "DATABASE_URL": "postgresql://username:password@localhost:5432/database_name"
+        "DB_HOST": "localhost",
+        "DB_PORT": "5432",
+        "DB_USER": "postgres",
+        "DB_PASSWORD": "your_password",
+        "DB_NAME": "your_database",
+        "DB_SSL_MODE": "require"
+      },
+      "disabled": false,
+      "autoApprove": ["list_tables", "get_schema"]
+    }
+  }
+}
+```
+
+Alternative using DATABASE_URL:
+```json
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "npx",
+      "args": ["mcp-postgres@latest"],
+      "env": {
+        "DATABASE_URL": "postgresql://username:password@localhost:5432/database_name?sslmode=require"
       },
       "disabled": false,
       "autoApprove": ["list_tables", "get_schema"]
@@ -42,18 +64,29 @@ Add this to your MCP client configuration (e.g., `.kiro/settings/mcp.json`):
 
 The server supports multiple configuration methods:
 
-#### Option 1: DATABASE_URL
-```bash
-DATABASE_URL=postgresql://username:password@localhost:5432/database_name
-```
-
-#### Option 2: Individual Environment Variables
+#### Option 1: Individual Environment Variables (Recommended)
 ```bash
 DB_HOST=localhost
 DB_PORT=5432
 DB_USER=postgres
 DB_PASSWORD=your_password
 DB_NAME=your_database
+DB_SSL_MODE=require  # Optional: require, disable, or omit for default
+```
+
+Alternative PostgreSQL-style variable names are also supported:
+```bash
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your_password
+POSTGRES_DB=your_database
+POSTGRES_SSL_MODE=require  # Optional: require, disable, or omit for default
+```
+
+#### Option 2: DATABASE_URL (Fallback)
+```bash
+DATABASE_URL=postgresql://username:password@localhost:5432/database_name?sslmode=require
 ```
 
 #### Option 3: Config File
@@ -66,10 +99,24 @@ Create a `config.json` file in your working directory:
     "port": 5432,
     "user": "postgres",
     "password": "your_password",
-    "database": "your_database"
+    "database": "your_database",
+    "sslmode": "require"
   }
 }
 ```
+
+### SSL Configuration
+
+The server supports SSL connections with the following modes:
+
+- `require` - Forces SSL connection (useful for cloud databases)
+- `disable` - Explicitly disables SSL (default for local development)
+- Omit the SSL mode for default behavior (no SSL)
+
+SSL can be configured via:
+- Environment variables: `DB_SSL_MODE` or `POSTGRES_SSL_MODE`
+- DATABASE_URL parameter: `?sslmode=require`
+- Config file: `"sslmode": "require"`
 
 ## Available Tools
 
