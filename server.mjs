@@ -2,13 +2,79 @@
 
 import fs from "fs";
 import path from "path";
+import https from "https";
+import crypto from "crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { Client } from "pg";
 
+// AWS RDS Certificate Management
+const AWS_RDS_CERT_URL = "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem";
+const CERT_CACHE_DIR = path.join(process.cwd(), ".aws-certs");
+const CERT_FILE_PATH = path.join(CERT_CACHE_DIR, "rds-global-bundle.pem");
+
+async function downloadRdsCertificate() {
+  return new Promise((resolve, reject) => {
+    console.error("Downloading AWS RDS certificate bundle...");
+    
+    const file = fs.createWriteStream(CERT_FILE_PATH);
+    const request = https.get(AWS_RDS_CERT_URL, (response) => {
+      if (response.statusCode !== 200) {
+        reject(new Error(`Failed to download certificate: HTTP ${response.statusCode}`));
+        return;
+      }
+      
+      response.pipe(file);
+      
+      file.on('finish', () => {
+        file.close();
+        console.error("AWS RDS certificate bundle downloaded successfully");
+        resolve(CERT_FILE_PATH);
+      });
+    });
+    
+    request.on('error', (err) => {
+      fs.unlink(CERT_FILE_PATH, () => {}); // Delete partial file
+      reject(err);
+    });
+    
+    file.on('error', (err) => {
+      fs.unlink(CERT_FILE_PATH, () => {}); // Delete partial file
+      reject(err);
+    });
+  });
+}
+
+async function ensureRdsCertificate() {
+  // Create cache directory if it doesn't exist
+  if (!fs.existsSync(CERT_CACHE_DIR)) {
+    fs.mkdirSync(CERT_CACHE_DIR, { recursive: true });
+  }
+  
+  // Check if certificate already exists and is recent (less than 30 days old)
+  if (fs.existsSync(CERT_FILE_PATH)) {
+    const stats = fs.statSync(CERT_FILE_PATH);
+    const ageInDays = (Date.now() - stats.mtime.getTime()) / (1000 * 60 * 60 * 24);
+    
+    if (ageInDays < 30) {
+      console.error("Using cached AWS RDS certificate bundle");
+      return CERT_FILE_PATH;
+    } else {
+      console.error("AWS RDS certificate bundle is older than 30 days, re-downloading...");
+    }
+  }
+  
+  // Download the certificate
+  return await downloadRdsCertificate();
+}
+
+function isAwsRdsEndpoint(hostname) {
+  return hostname && hostname.includes('.rds.amazonaws.com');
+}
+
 // Load configuration from multiple sources
-function loadConfig() {
+async function loadConfig() {
   // Try individual environment variables first (preferred method)
   if (process.env.DB_HOST || process.env.POSTGRES_HOST || process.env.DB_USER || process.env.POSTGRES_USER) {
     const config = {
@@ -21,10 +87,18 @@ function loadConfig() {
       }
     };
 
-    // Add SSL configuration
+    // Add SSL configuration with AWS RDS auto-detection
     const sslMode = process.env.DB_SSL_MODE || process.env.POSTGRES_SSL_MODE;
     if (sslMode) {
       config.db.ssl = sslMode === 'require' ? { rejectUnauthorized: false } : sslMode === 'disable' ? false : true;
+    } else if (isAwsRdsEndpoint(config.db.host)) {
+      // Auto-configure SSL for AWS RDS with certificate bundle
+      const certPath = await ensureRdsCertificate();
+      config.db.ssl = {
+        rejectUnauthorized: true,
+        ca: fs.readFileSync(certPath, 'utf8')
+      };
+      console.error(`Auto-configured SSL for AWS RDS endpoint: ${config.db.host}`);
     }
 
     return config;
@@ -47,6 +121,14 @@ function loadConfig() {
     const sslMode = url.searchParams.get('sslmode') || process.env.DB_SSL_MODE || process.env.POSTGRES_SSL_MODE;
     if (sslMode) {
       config.db.ssl = sslMode === 'require' ? { rejectUnauthorized: false } : sslMode === 'disable' ? false : true;
+    } else if (isAwsRdsEndpoint(config.db.host)) {
+      // Auto-configure SSL for AWS RDS with certificate bundle
+      const certPath = await ensureRdsCertificate();
+      config.db.ssl = {
+        rejectUnauthorized: true,
+        ca: fs.readFileSync(certPath, 'utf8')
+      };
+      console.error(`Auto-configured SSL for AWS RDS endpoint: ${config.db.host}`);
     }
 
     return config;
@@ -62,6 +144,14 @@ function loadConfig() {
       const sslMode = config.db.sslmode;
       delete config.db.sslmode; // Remove sslmode property
       config.db.ssl = sslMode === 'require' ? { rejectUnauthorized: false } : sslMode === 'disable' ? false : true;
+    } else if (config.db && isAwsRdsEndpoint(config.db.host)) {
+      // Auto-configure SSL for AWS RDS with certificate bundle
+      const certPath = await ensureRdsCertificate();
+      config.db.ssl = {
+        rejectUnauthorized: true,
+        ca: fs.readFileSync(certPath, 'utf8')
+      };
+      console.error(`Auto-configured SSL for AWS RDS endpoint: ${config.db.host}`);
     }
 
     return config;
@@ -80,11 +170,18 @@ function loadConfig() {
   };
 }
 
-const config = loadConfig();
+// Initialize application
+async function initializeApp() {
+  const config = await loadConfig();
 
-// Initialize database connection
-const db = new Client(config.db);
-await db.connect();
+  // Initialize database connection
+  const db = new Client(config.db);
+  await db.connect();
+
+  return db;
+}
+
+const db = await initializeApp();
 
 // Create MCP server
 const server = new Server(
