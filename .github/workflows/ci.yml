@@ -43,7 +43,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     if: github.event_name == 'release' && github.event.action == 'published'
-    environment: default
+    environment: env1
 
     permissions:
       contents: read
@@ -63,4 +63,4 @@ jobs:
         run: npm ci
 
       - name: Publish to npm (trusted publishing)
-        run: npm publish --provenance --access public
+        run: npm publish --access public
