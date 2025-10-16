@@ -1,6 +1,6 @@
 {
   "name": "mcp-postgres",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Model Context Protocol server for PostgreSQL database operations",
   "main": "server.mjs",
   "bin": {
@@ -10,7 +10,13 @@
     "start": "node server.mjs",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["mcp", "postgres", "postgresql", "database", "model-context-protocol"],
+  "keywords": [
+    "mcp",
+    "postgres",
+    "postgresql",
+    "database",
+    "model-context-protocol"
+  ],
   "author": "Your Name",
   "license": "MIT",
   "type": "module",
