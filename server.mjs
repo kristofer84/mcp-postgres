@@ -3,6 +3,7 @@
 import fs from "fs";
 import path from "path";
 import https from "https";
+import os from "os";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -10,7 +11,7 @@ import { Client } from "pg";
 
 // AWS RDS Certificate Management
 const AWS_RDS_CERT_URL = "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem";
-const CERT_CACHE_DIR = path.join(process.cwd(), ".aws-certs");
+const CERT_CACHE_DIR = path.join(os.homedir(), ".aws", "rds-certs");
 const CERT_FILE_PATH = path.join(CERT_CACHE_DIR, "rds-global-bundle.pem");
 
 async function downloadRdsCertificate() {
@@ -106,11 +107,11 @@ function getCacheStatus() {
   if (!fs.existsSync(CERT_FILE_PATH)) {
     return { exists: false, message: "No certificate cached" };
   }
-  
+
   const stats = fs.statSync(CERT_FILE_PATH);
   const ageInDays = (Date.now() - stats.mtime.getTime()) / (1000 * 60 * 60 * 24);
   const daysRemaining = Math.ceil(30 - ageInDays);
-  
+
   return {
     exists: true,
     ageInDays: Math.ceil(ageInDays),
@@ -119,7 +120,7 @@ function getCacheStatus() {
     path: CERT_FILE_PATH,
     size: stats.size,
     lastModified: stats.mtime.toISOString(),
-    message: ageInDays < 30 
+    message: ageInDays < 30
       ? `Certificate cached (expires in ${daysRemaining} days)`
       : `Certificate expired ${Math.ceil(ageInDays - 30)} days ago`
   };
@@ -542,7 +543,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "check_certificate_cache": {
         const cacheStatus = getCacheStatus();
-        
+
         return {
           content: [
             {
