@@ -700,14 +700,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error("Only SELECT queries are allowed for safety");
         }
 
+        const startTime = Date.now();
         const result = await db.query(query);
+        const executionTime = Date.now() - startTime;
+
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify({
                 rows: result.rows,
-                rowCount: result.rowCount
+                rowCount: result.rowCount,
+                execution_time_ms: executionTime
               }, null, 2)
             }
           ]
@@ -843,8 +847,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Combine values for parameterized query
         const queryParams = [...Object.values(values), ...Object.values(where)];
 
+        const startTime = Date.now();
         const query = `UPDATE ${sanitizedTable} SET ${setClause} WHERE ${whereClause} RETURNING *`;
         const result = await db.query(query, queryParams);
+        const executionTime = Date.now() - startTime;
 
         return {
           content: [
@@ -852,7 +858,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               type: "text",
               text: JSON.stringify({
                 updated_rows: result.rowCount,
-                returning: result.rows
+                returning: result.rows,
+                execution_time_ms: executionTime
               }, null, 2)
             }
           ]
@@ -877,8 +884,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Get values for parameterized query
         const queryParams = Object.values(where);
 
+        const startTime = Date.now();
         const query = `DELETE FROM ${sanitizedTable} WHERE ${whereClause} RETURNING *`;
         const result = await db.query(query, queryParams);
+        const executionTime = Date.now() - startTime;
 
         return {
           content: [
@@ -886,7 +895,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               type: "text",
               text: JSON.stringify({
                 deleted_rows: result.rowCount,
-                returning: result.rows
+                returning: result.rows,
+                execution_time_ms: executionTime
               }, null, 2)
             }
           ]
