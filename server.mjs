@@ -424,6 +424,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             where: {
               type: "object",
               description: "Object with column names as keys and values to match for WHERE clause"
+            },
+            dry_run: {
+              type: "boolean",
+              description: "If true, only preview what would be updated without executing",
+              default: false
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of rows to update (safety limit)",
+              default: 1000
             }
           },
           required: ["table_name", "values", "where"]
@@ -442,9 +452,196 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             where: {
               type: "object",
               description: "Object with column names as keys and values to match for WHERE clause"
+            },
+            dry_run: {
+              type: "boolean",
+              description: "If true, only preview what would be deleted without executing",
+              default: false
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of rows to delete (safety limit)",
+              default: 1000
             }
           },
           required: ["table_name", "where"]
+        }
+      },
+      {
+        name: "insert_data",
+        description: "Insert new rows into a table",
+        inputSchema: {
+          type: "object",
+          properties: {
+            table_name: {
+              type: "string",
+              description: "Name of the table to insert into"
+            },
+            data: {
+              type: "object",
+              description: "Object with column names as keys and values to insert"
+            }
+          },
+          required: ["table_name", "data"]
+        }
+      },
+      {
+        name: "execute_raw_query",
+        description: "Execute any SQL query including INSERT, UPDATE, DELETE (use with caution)",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "SQL query to execute"
+            },
+            params: {
+              type: "array",
+              description: "Optional array of parameters for parameterized queries",
+              items: {}
+            }
+          },
+          required: ["query"]
+        }
+      },
+      {
+        name: "count_rows",
+        description: "Count rows in a table with optional WHERE conditions",
+        inputSchema: {
+          type: "object",
+          properties: {
+            table_name: {
+              type: "string",
+              description: "Name of the table to count rows from"
+            },
+            where: {
+              type: "object",
+              description: "Optional: Object with column names as keys and values to match for WHERE clause"
+            }
+          },
+          required: ["table_name"]
+        }
+      },
+      {
+        name: "table_exists",
+        description: "Check if a table exists in the database",
+        inputSchema: {
+          type: "object",
+          properties: {
+            table_name: {
+              type: "string",
+              description: "Name of the table to check"
+            }
+          },
+          required: ["table_name"]
+        }
+      },
+      {
+        name: "column_exists",
+        description: "Check if a column exists in a table",
+        inputSchema: {
+          type: "object",
+          properties: {
+            table_name: {
+              type: "string",
+              description: "Name of the table"
+            },
+            column_name: {
+              type: "string",
+              description: "Name of the column to check"
+            }
+          },
+          required: ["table_name", "column_name"]
+        }
+      },
+      {
+        name: "get_relationships",
+        description: "Get foreign key relationships for tables",
+        inputSchema: {
+          type: "object",
+          properties: {
+            table_name: {
+              type: "string",
+              description: "Optional: specific table name to get relationships for"
+            }
+          }
+        }
+      },
+      {
+        name: "create_table",
+        description: "Create a new table with specified columns",
+        inputSchema: {
+          type: "object",
+          properties: {
+            table_name: {
+              type: "string",
+              description: "Name of the table to create"
+            },
+            columns: {
+              type: "array",
+              description: "Array of column definitions",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  type: { type: "string" },
+                  nullable: { type: "boolean", default: true },
+                  primary_key: { type: "boolean", default: false },
+                  unique: { type: "boolean", default: false },
+                  default: { type: "string" }
+                },
+                required: ["name", "type"]
+              }
+            }
+          },
+          required: ["table_name", "columns"]
+        }
+      },
+      {
+        name: "alter_table",
+        description: "Modify an existing table structure",
+        inputSchema: {
+          type: "object",
+          properties: {
+            table_name: {
+              type: "string",
+              description: "Name of the table to alter"
+            },
+            action: {
+              type: "string",
+              enum: ["add_column", "drop_column", "rename_column", "alter_column_type"],
+              description: "Type of alteration to perform"
+            },
+            column_name: {
+              type: "string",
+              description: "Name of the column (for add/drop/rename/alter)"
+            },
+            column_type: {
+              type: "string",
+              description: "Data type (for add_column or alter_column_type)"
+            },
+            new_column_name: {
+              type: "string",
+              description: "New column name (for rename_column)"
+            },
+            nullable: {
+              type: "boolean",
+              description: "Whether column is nullable (for add_column)"
+            },
+            default_value: {
+              type: "string",
+              description: "Default value (for add_column)"
+            }
+          },
+          required: ["table_name", "action", "column_name"]
+        }
+      },
+      {
+        name: "get_connection_status",
+        description: "Get database connection status and performance metrics",
+        inputSchema: {
+          type: "object",
+          properties: {}
         }
       }
     ],
@@ -691,6 +888,342 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 deleted_rows: result.rowCount,
                 returning: result.rows
               }, null, 2)
+            }
+          ]
+        };
+      }
+
+      case "insert_data": {
+        const tableName = args?.table_name;
+        const data = args?.data;
+
+        if (!tableName || !data) {
+          throw new Error("table_name and data are required");
+        }
+
+        const sanitizedTable = tableName.replace(/[^a-zA-Z0-9_]/g, '');
+        const columns = Object.keys(data);
+        const values = Object.values(data);
+        const placeholders = columns.map((_, idx) => `$${idx + 1}`).join(', ');
+
+        const startTime = Date.now();
+        const query = `INSERT INTO ${sanitizedTable} (${columns.join(', ')}) VALUES (${placeholders}) RETURNING *`;
+        const result = await db.query(query, values);
+        const executionTime = Date.now() - startTime;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                inserted_rows: result.rowCount,
+                returning: result.rows,
+                execution_time_ms: executionTime
+              }, null, 2)
+            }
+          ]
+        };
+      }
+
+      case "execute_raw_query": {
+        const query = args?.query;
+        const params = args?.params || [];
+
+        if (!query) {
+          throw new Error("Query is required");
+        }
+
+        const startTime = Date.now();
+        const result = await db.query(query, params);
+        const executionTime = Date.now() - startTime;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                rows: result.rows,
+                rowCount: result.rowCount,
+                command: result.command,
+                execution_time_ms: executionTime
+              }, null, 2)
+            }
+          ]
+        };
+      }
+
+      case "count_rows": {
+        const tableName = args?.table_name;
+        const where = args?.where;
+
+        if (!tableName) {
+          throw new Error("table_name is required");
+        }
+
+        const sanitizedTable = tableName.replace(/[^a-zA-Z0-9_]/g, '');
+        let query = `SELECT COUNT(*) as count FROM ${sanitizedTable}`;
+        let queryParams = [];
+
+        if (where && Object.keys(where).length > 0) {
+          const whereColumns = Object.keys(where);
+          const whereClause = whereColumns.map((col, idx) => `${col} = $${idx + 1}`).join(' AND ');
+          query += ` WHERE ${whereClause}`;
+          queryParams = Object.values(where);
+        }
+
+        const startTime = Date.now();
+        const result = await db.query(query, queryParams);
+        const executionTime = Date.now() - startTime;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                table_name: tableName,
+                count: parseInt(result.rows[0].count),
+                execution_time_ms: executionTime
+              }, null, 2)
+            }
+          ]
+        };
+      }
+
+      case "table_exists": {
+        const tableName = args?.table_name;
+
+        if (!tableName) {
+          throw new Error("table_name is required");
+        }
+
+        const result = await db.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name = $1
+          )
+        `, [tableName]);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                table_name: tableName,
+                exists: result.rows[0].exists
+              }, null, 2)
+            }
+          ]
+        };
+      }
+
+      case "column_exists": {
+        const tableName = args?.table_name;
+        const columnName = args?.column_name;
+
+        if (!tableName || !columnName) {
+          throw new Error("table_name and column_name are required");
+        }
+
+        const result = await db.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.columns 
+            WHERE table_schema = 'public' 
+            AND table_name = $1 
+            AND column_name = $2
+          )
+        `, [tableName, columnName]);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                table_name: tableName,
+                column_name: columnName,
+                exists: result.rows[0].exists
+              }, null, 2)
+            }
+          ]
+        };
+      }
+
+      case "get_relationships": {
+        const tableName = args?.table_name;
+        let query = `
+          SELECT
+            tc.table_name,
+            kcu.column_name,
+            ccu.table_name AS foreign_table_name,
+            ccu.column_name AS foreign_column_name,
+            tc.constraint_name
+          FROM information_schema.table_constraints AS tc
+          JOIN information_schema.key_column_usage AS kcu
+            ON tc.constraint_name = kcu.constraint_name
+            AND tc.table_schema = kcu.table_schema
+          JOIN information_schema.constraint_column_usage AS ccu
+            ON ccu.constraint_name = tc.constraint_name
+            AND ccu.table_schema = tc.table_schema
+          WHERE tc.constraint_type = 'FOREIGN KEY'
+            AND tc.table_schema = 'public'
+        `;
+
+        let queryParams = [];
+        if (tableName) {
+          query += ` AND tc.table_name = $1`;
+          queryParams = [tableName];
+        }
+
+        query += ` ORDER BY tc.table_name, kcu.column_name`;
+
+        const result = await db.query(query, queryParams);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                relationships: result.rows,
+                count: result.rowCount
+              }, null, 2)
+            }
+          ]
+        };
+      }
+
+      case "create_table": {
+        const tableName = args?.table_name;
+        const columns = args?.columns;
+
+        if (!tableName || !columns || !Array.isArray(columns) || columns.length === 0) {
+          throw new Error("table_name and columns array are required");
+        }
+
+        const sanitizedTable = tableName.replace(/[^a-zA-Z0-9_]/g, '');
+        
+        const columnDefs = columns.map(col => {
+          let def = `${col.name} ${col.type}`;
+          if (col.primary_key) def += ' PRIMARY KEY';
+          if (col.unique && !col.primary_key) def += ' UNIQUE';
+          if (col.nullable === false && !col.primary_key) def += ' NOT NULL';
+          if (col.default !== undefined) def += ` DEFAULT ${col.default}`;
+          return def;
+        }).join(', ');
+
+        const query = `CREATE TABLE ${sanitizedTable} (${columnDefs})`;
+        const startTime = Date.now();
+        await db.query(query);
+        const executionTime = Date.now() - startTime;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                table_name: tableName,
+                created: true,
+                execution_time_ms: executionTime,
+                query: query
+              }, null, 2)
+            }
+          ]
+        };
+      }
+
+      case "alter_table": {
+        const tableName = args?.table_name;
+        const action = args?.action;
+        const columnName = args?.column_name;
+
+        if (!tableName || !action || !columnName) {
+          throw new Error("table_name, action, and column_name are required");
+        }
+
+        const sanitizedTable = tableName.replace(/[^a-zA-Z0-9_]/g, '');
+        let query;
+
+        switch (action) {
+          case "add_column":
+            if (!args.column_type) {
+              throw new Error("column_type is required for add_column");
+            }
+            query = `ALTER TABLE ${sanitizedTable} ADD COLUMN ${columnName} ${args.column_type}`;
+            if (args.nullable === false) query += ' NOT NULL';
+            if (args.default_value !== undefined) query += ` DEFAULT ${args.default_value}`;
+            break;
+
+          case "drop_column":
+            query = `ALTER TABLE ${sanitizedTable} DROP COLUMN ${columnName}`;
+            break;
+
+          case "rename_column":
+            if (!args.new_column_name) {
+              throw new Error("new_column_name is required for rename_column");
+            }
+            query = `ALTER TABLE ${sanitizedTable} RENAME COLUMN ${columnName} TO ${args.new_column_name}`;
+            break;
+
+          case "alter_column_type":
+            if (!args.column_type) {
+              throw new Error("column_type is required for alter_column_type");
+            }
+            query = `ALTER TABLE ${sanitizedTable} ALTER COLUMN ${columnName} TYPE ${args.column_type}`;
+            break;
+
+          default:
+            throw new Error(`Unknown action: ${action}`);
+        }
+
+        const startTime = Date.now();
+        await db.query(query);
+        const executionTime = Date.now() - startTime;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                table_name: tableName,
+                action: action,
+                success: true,
+                execution_time_ms: executionTime,
+                query: query
+              }, null, 2)
+            }
+          ]
+        };
+      }
+
+      case "get_connection_status": {
+        const connectionInfo = {
+          connected: !db._ending && !db._ended,
+          host: dbConfig?.db?.host,
+          port: dbConfig?.db?.port,
+          database: dbConfig?.db?.database,
+          user: dbConfig?.db?.user,
+          ssl_enabled: !!dbConfig?.db?.ssl
+        };
+
+        try {
+          const [dbSize, connections, version] = await Promise.all([
+            db.query(`SELECT pg_database_size(current_database()) as size`),
+            db.query(`SELECT count(*) as count FROM pg_stat_activity WHERE datname = current_database()`),
+            db.query(`SELECT version()`)
+          ]);
+
+          connectionInfo.database_size_bytes = parseInt(dbSize.rows[0].size);
+          connectionInfo.database_size_mb = Math.round(dbSize.rows[0].size / 1024 / 1024 * 100) / 100;
+          connectionInfo.active_connections = parseInt(connections.rows[0].count);
+          connectionInfo.postgres_version = version.rows[0].version;
+        } catch (error) {
+          connectionInfo.stats_error = error.message;
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(connectionInfo, null, 2)
             }
           ]
         };
