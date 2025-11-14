@@ -345,8 +345,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "execute_query",
-        description: "Execute a SQL query (SELECT only for safety)",
+        name: "query_data",
+        description: "Query data from the database (SELECT only for safety)",
         inputSchema: {
           type: "object",
           properties: {
@@ -406,6 +406,46 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {}
         }
+      },
+      {
+        name: "update_data",
+        description: "Update rows in a table with specified values and conditions",
+        inputSchema: {
+          type: "object",
+          properties: {
+            table_name: {
+              type: "string",
+              description: "Name of the table to update"
+            },
+            values: {
+              type: "object",
+              description: "Object with column names as keys and new values"
+            },
+            where: {
+              type: "object",
+              description: "Object with column names as keys and values to match for WHERE clause"
+            }
+          },
+          required: ["table_name", "values", "where"]
+        }
+      },
+      {
+        name: "delete_data",
+        description: "Delete rows from a table based on specified conditions",
+        inputSchema: {
+          type: "object",
+          properties: {
+            table_name: {
+              type: "string",
+              description: "Name of the table to delete from"
+            },
+            where: {
+              type: "object",
+              description: "Object with column names as keys and values to match for WHERE clause"
+            }
+          },
+          required: ["table_name", "where"]
+        }
       }
     ],
   };
@@ -451,7 +491,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
       }
 
-      case "execute_query": {
+      case "query_data": {
         const query = args?.query;
         if (!query) {
           throw new Error("Query is required");
@@ -577,6 +617,79 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 aws_rds_certificate_cache: cacheStatus,
                 cache_directory: CERT_CACHE_DIR,
                 auto_download_url: AWS_RDS_CERT_URL
+              }, null, 2)
+            }
+          ]
+        };
+      }
+
+      case "update_data": {
+        const tableName = args?.table_name;
+        const values = args?.values;
+        const where = args?.where;
+
+        if (!tableName || !values || !where) {
+          throw new Error("table_name, values, and where are required");
+        }
+
+        // Sanitize table name
+        const sanitizedTable = tableName.replace(/[^a-zA-Z0-9_]/g, '');
+
+        // Build SET clause
+        const setColumns = Object.keys(values);
+        const setClause = setColumns.map((col, idx) => `${col} = $${idx + 1}`).join(', ');
+
+        // Build WHERE clause
+        const whereColumns = Object.keys(where);
+        const whereClause = whereColumns.map((col, idx) => `${col} = $${idx + setColumns.length + 1}`).join(' AND ');
+
+        // Combine values for parameterized query
+        const queryParams = [...Object.values(values), ...Object.values(where)];
+
+        const query = `UPDATE ${sanitizedTable} SET ${setClause} WHERE ${whereClause} RETURNING *`;
+        const result = await db.query(query, queryParams);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                updated_rows: result.rowCount,
+                returning: result.rows
+              }, null, 2)
+            }
+          ]
+        };
+      }
+
+      case "delete_data": {
+        const tableName = args?.table_name;
+        const where = args?.where;
+
+        if (!tableName || !where) {
+          throw new Error("table_name and where are required");
+        }
+
+        // Sanitize table name
+        const sanitizedTable = tableName.replace(/[^a-zA-Z0-9_]/g, '');
+
+        // Build WHERE clause
+        const whereColumns = Object.keys(where);
+        const whereClause = whereColumns.map((col, idx) => `${col} = $${idx + 1}`).join(' AND ');
+
+        // Get values for parameterized query
+        const queryParams = Object.values(where);
+
+        const query = `DELETE FROM ${sanitizedTable} WHERE ${whereClause} RETURNING *`;
+        const result = await db.query(query, queryParams);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                deleted_rows: result.rowCount,
+                returning: result.rows
               }, null, 2)
             }
           ]
