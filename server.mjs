@@ -256,12 +256,26 @@ async function loadConfig() {
   };
 }
 
+// Database connection management
+let db = null;
+let dbConfig = null;
+
 // Initialize application
 async function initializeApp() {
   const config = await loadConfig();
+  dbConfig = config;
+
+  // Close existing connection if any
+  if (db) {
+    try {
+      await db.end();
+    } catch (err) {
+      console.error('Error closing existing connection:', err.message);
+    }
+  }
 
   // Initialize database connection with retry logic
-  const db = new Client(config.db);
+  db = new Client(config.db);
 
   // Add error handler to prevent unhandled errors
   db.on('error', (err) => {
@@ -290,7 +304,15 @@ async function initializeApp() {
   return db;
 }
 
-const db = await initializeApp();
+await initializeApp();
+
+// Ensure database connection is alive
+async function ensureConnection() {
+  if (!db || db._ending || db._ended) {
+    console.error('Database connection lost, reconnecting...');
+    await initializeApp();
+  }
+}
 
 // Create MCP server
 const server = new Server(
@@ -394,6 +416,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
+    // Ensure connection is alive before executing any query
+    await ensureConnection();
+
     switch (name) {
       case "get_schema": {
         let query = `

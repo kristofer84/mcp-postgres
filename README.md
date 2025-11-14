@@ -198,9 +198,31 @@ Checks the status of the AWS RDS certificate cache.
 
 For security reasons, only SELECT queries are allowed through the `execute_query` tool. This prevents accidental data modification through the MCP interface.
 
-## Example Usage
+## Testing
 
-Once configured, you can use the tools in your MCP client:
+### Testing with MCP Inspector
+
+You can test the server locally using the MCP Inspector tool:
+
+```powershell
+# Install the MCP inspector
+npm install -g @modelcontextprotocol/inspector
+
+# Set your database credentials
+$env:DB_HOST="localhost"
+$env:DB_USER="postgres"
+$env:DB_PASSWORD="your_password"
+$env:DB_NAME="your_database"
+
+# Run the inspector
+mcp-inspector node server.mjs
+```
+
+The inspector opens a web UI where you can interactively test each tool and see the responses.
+
+### Testing in Kiro IDE
+
+Once configured in your `.kiro/settings/mcp.json`, you can test the tools directly:
 
 - "List all tables in the database"
 - "Show me the schema for the users table"
