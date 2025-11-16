@@ -314,6 +314,16 @@ async function ensureConnection() {
   }
 }
 
+// Helper function to normalize SQL queries by removing comments and whitespace
+// This allows queries with comments to pass validation checks
+function normalizeQuery(query) {
+  return query
+    .replace(/--[^\n]*/g, '') // Remove single-line comments (-- comment)
+    .replace(/\/\*[\s\S]*?\*\//g, '') // Remove multi-line comments (/* comment */)
+    .trim()
+    .toLowerCase();
+}
+
 // Create MCP server
 const server = new Server(
   {
@@ -695,8 +705,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         // Safety check - only allow SELECT statements
-        const trimmedQuery = query.trim().toLowerCase();
-        if (!trimmedQuery.startsWith("select")) {
+        // Normalize query to handle comments and whitespace
+        const normalizedQuery = normalizeQuery(query);
+        if (!normalizedQuery.startsWith("select")) {
           throw new Error("Only SELECT queries are allowed for safety");
         }
 
