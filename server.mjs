@@ -103,6 +103,30 @@ function isAwsRdsEndpoint(hostname) {
 // Cache for certificate to avoid multiple downloads
 let certificateCache = null;
 
+// Build SSL configuration for a given sslMode and hostname
+async function buildSslConfig(sslMode, hostname) {
+  if (sslMode === 'require') return { rejectUnauthorized: true };
+  if (sslMode === 'disable') return false;
+  if (sslMode) return true;
+
+  if (isAwsRdsEndpoint(hostname)) {
+    try {
+      const certPath = await ensureRdsCertificate();
+      if (certPath && fs.existsSync(certPath)) {
+        console.error(`Auto-configured SSL for AWS RDS endpoint: ${hostname}`);
+        return { rejectUnauthorized: true, ca: fs.readFileSync(certPath, 'utf8') };
+      }
+      console.error(`WARNING: Could not obtain RDS certificate, falling back to unverified SSL for: ${hostname}`);
+      return { rejectUnauthorized: false };
+    } catch (error) {
+      console.error(`WARNING: SSL auto-configuration failed, falling back to unverified SSL: ${error.message}`);
+      return { rejectUnauthorized: false };
+    }
+  }
+
+  return undefined; // No SSL configured
+}
+
 function getCacheStatus() {
   if (!fs.existsSync(CERT_FILE_PATH)) {
     return { exists: false, message: "No certificate cached" };
@@ -142,28 +166,8 @@ async function loadConfig() {
 
     // Add SSL configuration with AWS RDS auto-detection
     const sslMode = process.env.DB_SSL_MODE || process.env.POSTGRES_SSL_MODE;
-    if (sslMode) {
-      config.db.ssl = sslMode === 'require' ? { rejectUnauthorized: false } : sslMode === 'disable' ? false : true;
-    } else if (isAwsRdsEndpoint(config.db.host)) {
-      // Auto-configure SSL for AWS RDS with certificate bundle
-      try {
-        const certPath = await ensureRdsCertificate();
-        if (certPath && fs.existsSync(certPath)) {
-          config.db.ssl = {
-            rejectUnauthorized: true,
-            ca: fs.readFileSync(certPath, 'utf8')
-          };
-          console.error(`Auto-configured SSL for AWS RDS endpoint: ${config.db.host}`);
-        } else {
-          // Fallback to basic SSL if certificate download fails
-          config.db.ssl = { rejectUnauthorized: false };
-          console.error(`Fallback SSL configuration for AWS RDS endpoint: ${config.db.host}`);
-        }
-      } catch (error) {
-        console.error(`SSL auto-configuration failed, using fallback: ${error.message}`);
-        config.db.ssl = { rejectUnauthorized: false };
-      }
-    }
+    const ssl = await buildSslConfig(sslMode, config.db.host);
+    if (ssl !== undefined) config.db.ssl = ssl;
 
     return config;
   }
@@ -183,28 +187,8 @@ async function loadConfig() {
 
     // Check for SSL mode in URL search params or environment
     const sslMode = url.searchParams.get('sslmode') || process.env.DB_SSL_MODE || process.env.POSTGRES_SSL_MODE;
-    if (sslMode) {
-      config.db.ssl = sslMode === 'require' ? { rejectUnauthorized: false } : sslMode === 'disable' ? false : true;
-    } else if (isAwsRdsEndpoint(config.db.host)) {
-      // Auto-configure SSL for AWS RDS with certificate bundle
-      try {
-        const certPath = await ensureRdsCertificate();
-        if (certPath && fs.existsSync(certPath)) {
-          config.db.ssl = {
-            rejectUnauthorized: true,
-            ca: fs.readFileSync(certPath, 'utf8')
-          };
-          console.error(`Auto-configured SSL for AWS RDS endpoint: ${config.db.host}`);
-        } else {
-          // Fallback to basic SSL if certificate download fails
-          config.db.ssl = { rejectUnauthorized: false };
-          console.error(`Fallback SSL configuration for AWS RDS endpoint: ${config.db.host}`);
-        }
-      } catch (error) {
-        console.error(`SSL auto-configuration failed, using fallback: ${error.message}`);
-        config.db.ssl = { rejectUnauthorized: false };
-      }
-    }
+    const ssl = await buildSslConfig(sslMode, config.db.host);
+    if (ssl !== undefined) config.db.ssl = ssl;
 
     return config;
   }
@@ -215,29 +199,11 @@ async function loadConfig() {
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
 
     // Process SSL mode if specified in config
-    if (config.db && config.db.sslmode) {
+    if (config.db) {
       const sslMode = config.db.sslmode;
-      delete config.db.sslmode; // Remove sslmode property
-      config.db.ssl = sslMode === 'require' ? { rejectUnauthorized: false } : sslMode === 'disable' ? false : true;
-    } else if (config.db && isAwsRdsEndpoint(config.db.host)) {
-      // Auto-configure SSL for AWS RDS with certificate bundle
-      try {
-        const certPath = await ensureRdsCertificate();
-        if (certPath && fs.existsSync(certPath)) {
-          config.db.ssl = {
-            rejectUnauthorized: true,
-            ca: fs.readFileSync(certPath, 'utf8')
-          };
-          console.error(`Auto-configured SSL for AWS RDS endpoint: ${config.db.host}`);
-        } else {
-          // Fallback to basic SSL if certificate download fails
-          config.db.ssl = { rejectUnauthorized: false };
-          console.error(`Fallback SSL configuration for AWS RDS endpoint: ${config.db.host}`);
-        }
-      } catch (error) {
-        console.error(`SSL auto-configuration failed, using fallback: ${error.message}`);
-        config.db.ssl = { rejectUnauthorized: false };
-      }
+      if (sslMode) delete config.db.sslmode;
+      const ssl = await buildSslConfig(sslMode || null, config.db.host);
+      if (ssl !== undefined) config.db.ssl = ssl;
     }
 
     return config;
@@ -286,6 +252,9 @@ async function initializeApp() {
   while (retries > 0) {
     try {
       await db.connect();
+      // Apply a default 30-second statement timeout to prevent runaway queries
+      const timeoutMs = parseInt(process.env.DB_STATEMENT_TIMEOUT) || 30000;
+      await db.query(`SET statement_timeout = ${timeoutMs}`);
       console.error(`Connected to database: ${config.db.host}:${config.db.port}/${config.db.database}`);
       break;
     } catch (error) {
@@ -322,6 +291,27 @@ function normalizeQuery(query) {
     .replace(/\/\*[\s\S]*?\*\//g, '') // Remove multi-line comments (/* comment */)
     .trim()
     .toLowerCase();
+}
+
+// Quote a PostgreSQL identifier (table/column name) to prevent SQL injection
+function quoteIdent(name) {
+  return '"' + String(name).replace(/"/g, '""') + '"';
+}
+
+// Validate a PostgreSQL column/data type (e.g. VARCHAR(100), INTEGER, DECIMAL(10,2))
+function sanitizeType(type) {
+  if (!/^[a-zA-Z0-9\s(),._[\]]+$/.test(type)) {
+    throw new Error(`Invalid column type: ${type}`);
+  }
+  return type;
+}
+
+// Validate a column default value — block statement terminators and comment sequences
+function sanitizeDefault(val) {
+  if (/;|--|\/\*|\*\//.test(val)) {
+    throw new Error(`Invalid default value: ${val}`);
+  }
+  return val;
 }
 
 // Create MCP server
@@ -844,36 +834,57 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error("table_name, values, and where are required");
         }
 
-        // Sanitize table name
         const sanitizedTable = tableName.replace(/[^a-zA-Z0-9_]/g, '');
+        const limitVal = Math.min(args?.limit ?? 1000, 10000);
 
-        // Build SET clause
+        // Build SET clause with quoted column names
         const setColumns = Object.keys(values);
-        const setClause = setColumns.map((col, idx) => `${col} = $${idx + 1}`).join(', ');
+        const setClause = setColumns.map((col, idx) => `${quoteIdent(col)} = $${idx + 1}`).join(', ');
 
-        // Build WHERE clause
+        // Build WHERE clause with quoted column names
         const whereColumns = Object.keys(where);
-        const whereClause = whereColumns.map((col, idx) => `${col} = $${idx + setColumns.length + 1}`).join(' AND ');
+        const whereClause = whereColumns.map((col, idx) => `${quoteIdent(col)} = $${idx + setColumns.length + 1}`).join(' AND ');
 
-        // Combine values for parameterized query
         const queryParams = [...Object.values(values), ...Object.values(where)];
 
+        // dry_run: preview affected rows without modifying data
+        if (args?.dry_run) {
+          const whereClauseForSelect = whereColumns.map((col, idx) => `${quoteIdent(col)} = $${idx + 1}`).join(' AND ');
+          const previewResult = await db.query(
+            `SELECT * FROM ${sanitizedTable} WHERE ${whereClauseForSelect} LIMIT $${whereColumns.length + 1}`,
+            [...Object.values(where), limitVal]
+          );
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                dry_run: true,
+                would_update_rows: previewResult.rowCount,
+                preview_rows: previewResult.rows,
+                pending_values: values
+              }, null, 2)
+            }]
+          };
+        }
+
+        // Enforce row limit via ctid subquery
+        const limitParamIdx = queryParams.length + 1;
+        queryParams.push(limitVal);
+
         const startTime = Date.now();
-        const query = `UPDATE ${sanitizedTable} SET ${setClause} WHERE ${whereClause} RETURNING *`;
+        const query = `UPDATE ${sanitizedTable} SET ${setClause} WHERE ctid IN (SELECT ctid FROM ${sanitizedTable} WHERE ${whereClause} LIMIT $${limitParamIdx}) RETURNING *`;
         const result = await db.query(query, queryParams);
         const executionTime = Date.now() - startTime;
 
         return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                updated_rows: result.rowCount,
-                returning: result.rows,
-                execution_time_ms: executionTime
-              }, null, 2)
-            }
-          ]
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              updated_rows: result.rowCount,
+              returning: result.rows,
+              execution_time_ms: executionTime
+            }, null, 2)
+          }]
         };
       }
 
@@ -885,32 +896,50 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error("table_name and where are required");
         }
 
-        // Sanitize table name
         const sanitizedTable = tableName.replace(/[^a-zA-Z0-9_]/g, '');
+        const limitVal = Math.min(args?.limit ?? 1000, 10000);
 
-        // Build WHERE clause
+        // Build WHERE clause with quoted column names
         const whereColumns = Object.keys(where);
-        const whereClause = whereColumns.map((col, idx) => `${col} = $${idx + 1}`).join(' AND ');
+        const whereClause = whereColumns.map((col, idx) => `${quoteIdent(col)} = $${idx + 1}`).join(' AND ');
+        const queryParams = [...Object.values(where)];
 
-        // Get values for parameterized query
-        const queryParams = Object.values(where);
+        // dry_run: preview affected rows without deleting
+        if (args?.dry_run) {
+          const previewResult = await db.query(
+            `SELECT * FROM ${sanitizedTable} WHERE ${whereClause} LIMIT $${queryParams.length + 1}`,
+            [...queryParams, limitVal]
+          );
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                dry_run: true,
+                would_delete_rows: previewResult.rowCount,
+                preview_rows: previewResult.rows
+              }, null, 2)
+            }]
+          };
+        }
+
+        // Enforce row limit via ctid subquery
+        const limitParamIdx = queryParams.length + 1;
+        queryParams.push(limitVal);
 
         const startTime = Date.now();
-        const query = `DELETE FROM ${sanitizedTable} WHERE ${whereClause} RETURNING *`;
+        const query = `DELETE FROM ${sanitizedTable} WHERE ctid IN (SELECT ctid FROM ${sanitizedTable} WHERE ${whereClause} LIMIT $${limitParamIdx}) RETURNING *`;
         const result = await db.query(query, queryParams);
         const executionTime = Date.now() - startTime;
 
         return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                deleted_rows: result.rowCount,
-                returning: result.rows,
-                execution_time_ms: executionTime
-              }, null, 2)
-            }
-          ]
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              deleted_rows: result.rowCount,
+              returning: result.rows,
+              execution_time_ms: executionTime
+            }, null, 2)
+          }]
         };
       }
 
@@ -928,7 +957,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const placeholders = columns.map((_, idx) => `$${idx + 1}`).join(', ');
 
         const startTime = Date.now();
-        const query = `INSERT INTO ${sanitizedTable} (${columns.join(', ')}) VALUES (${placeholders}) RETURNING *`;
+        const query = `INSERT INTO ${sanitizedTable} (${columns.map(quoteIdent).join(', ')}) VALUES (${placeholders}) RETURNING *`;
         const result = await db.query(query, values);
         const executionTime = Date.now() - startTime;
 
@@ -987,7 +1016,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         if (where && Object.keys(where).length > 0) {
           const whereColumns = Object.keys(where);
-          const whereClause = whereColumns.map((col, idx) => `${col} = $${idx + 1}`).join(' AND ');
+          const whereClause = whereColumns.map((col, idx) => `${quoteIdent(col)} = $${idx + 1}`).join(' AND ');
           query += ` WHERE ${whereClause}`;
           queryParams = Object.values(where);
         }
@@ -1123,11 +1152,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const sanitizedTable = tableName.replace(/[^a-zA-Z0-9_]/g, '');
         
         const columnDefs = columns.map(col => {
-          let def = `${col.name} ${col.type}`;
+          let def = `${quoteIdent(col.name)} ${sanitizeType(col.type)}`;
           if (col.primary_key) def += ' PRIMARY KEY';
           if (col.unique && !col.primary_key) def += ' UNIQUE';
           if (col.nullable === false && !col.primary_key) def += ' NOT NULL';
-          if (col.default !== undefined) def += ` DEFAULT ${col.default}`;
+          if (col.default !== undefined) def += ` DEFAULT ${sanitizeDefault(col.default)}`;
           return def;
         }).join(', ');
 
@@ -1168,27 +1197,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (!args.column_type) {
               throw new Error("column_type is required for add_column");
             }
-            query = `ALTER TABLE ${sanitizedTable} ADD COLUMN ${columnName} ${args.column_type}`;
+            query = `ALTER TABLE ${sanitizedTable} ADD COLUMN ${quoteIdent(columnName)} ${sanitizeType(args.column_type)}`;
             if (args.nullable === false) query += ' NOT NULL';
-            if (args.default_value !== undefined) query += ` DEFAULT ${args.default_value}`;
+            if (args.default_value !== undefined) query += ` DEFAULT ${sanitizeDefault(args.default_value)}`;
             break;
 
           case "drop_column":
-            query = `ALTER TABLE ${sanitizedTable} DROP COLUMN ${columnName}`;
+            query = `ALTER TABLE ${sanitizedTable} DROP COLUMN ${quoteIdent(columnName)}`;
             break;
 
           case "rename_column":
             if (!args.new_column_name) {
               throw new Error("new_column_name is required for rename_column");
             }
-            query = `ALTER TABLE ${sanitizedTable} RENAME COLUMN ${columnName} TO ${args.new_column_name}`;
+            query = `ALTER TABLE ${sanitizedTable} RENAME COLUMN ${quoteIdent(columnName)} TO ${quoteIdent(args.new_column_name)}`;
             break;
 
           case "alter_column_type":
             if (!args.column_type) {
               throw new Error("column_type is required for alter_column_type");
             }
-            query = `ALTER TABLE ${sanitizedTable} ALTER COLUMN ${columnName} TYPE ${args.column_type}`;
+            query = `ALTER TABLE ${sanitizedTable} ALTER COLUMN ${quoteIdent(columnName)} TYPE ${sanitizeType(args.column_type)}`;
             break;
 
           default:

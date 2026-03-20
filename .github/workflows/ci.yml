@@ -16,6 +16,21 @@ jobs:
       matrix:
         node-version: [18.x, 20.x, 22.x]
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -32,12 +47,13 @@ jobs:
         run: npm run lint --if-present
 
       - name: Run tests
-        run: npm test --if-present
-
-      - name: Test server startup
-        run: |
-          timeout 10s node server.mjs --help || true
-          echo "Server startup test completed"
+        run: npm test
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: test
 
   publish:
     needs: test

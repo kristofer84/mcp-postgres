@@ -185,9 +185,20 @@ async function main() {
     console.log(`  Sample: ${result.sample_size} rows from ${result.table_name}`);
   });
 
-  // Test 13: update_data with dry_run (skipped - needs handler update)
-  await runTest("update_data (dry_run) - SKIPPED", async () => {
-    console.log(`  Skipped: dry_run feature needs handler implementation`);
+  // Test 13: update_data with dry_run
+  await runTest("update_data (dry_run)", async () => {
+    const result = await callTool(client, "update_data", {
+      table_name: "test_users",
+      values: { age: 99 },
+      where: { name: "Alice" },
+      dry_run: true,
+    });
+    if (!result.dry_run) throw new Error("dry_run flag not set in response");
+    if (result.would_update_rows !== 1) throw new Error(`Expected 1 preview row, got ${result.would_update_rows}`);
+    // Verify no actual update happened
+    const check = await callTool(client, "count_rows", { table_name: "test_users", where: { name: "Alice" } });
+    if (check.count !== 1) throw new Error("Row should still exist after dry_run");
+    console.log(`  dry_run preview: ${result.would_update_rows} rows would be updated`);
   });
 
   // Test 14: update_data
@@ -245,9 +256,19 @@ async function main() {
     console.log(`  Found ${result.count} foreign key relationships`);
   });
 
-  // Test 18: delete_data with dry_run (skipped - needs handler update)
-  await runTest("delete_data (dry_run) - SKIPPED", async () => {
-    console.log(`  Skipped: dry_run feature needs handler implementation`);
+  // Test 18: delete_data with dry_run
+  await runTest("delete_data (dry_run)", async () => {
+    const result = await callTool(client, "delete_data", {
+      table_name: "test_users",
+      where: { name: "Charlie" },
+      dry_run: true,
+    });
+    if (!result.dry_run) throw new Error("dry_run flag not set in response");
+    if (result.would_delete_rows !== 1) throw new Error(`Expected 1 preview row, got ${result.would_delete_rows}`);
+    // Verify no actual delete happened
+    const check = await callTool(client, "count_rows", { table_name: "test_users", where: { name: "Charlie" } });
+    if (check.count !== 1) throw new Error("Row should still exist after dry_run");
+    console.log(`  dry_run preview: ${result.would_delete_rows} rows would be deleted`);
   });
 
   // Test 19: delete_data

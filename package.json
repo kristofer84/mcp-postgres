@@ -1,6 +1,6 @@
 {
   "name": "mcp-postgres",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "Model Context Protocol server for PostgreSQL database operations",
   "main": "server.mjs",
   "bin": {
@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node server.mjs",
-    "test": "echo \"No tests yet - server startup test runs in CI\""
+    "test": "node test-tools.mjs"
   },
   "keywords": [
     "mcp",
