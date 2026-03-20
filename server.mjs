@@ -744,26 +744,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         // Get table info, columns, indexes, and constraints
-        const [columns, indexes, constraints] = await Promise.all([
-          db.query(`
+        const columns = await db.query(`
             SELECT column_name, data_type, is_nullable, column_default, character_maximum_length
             FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = $1
             ORDER BY ordinal_position
-          `, [tableName]),
-
-          db.query(`
+          `, [tableName]);
+        const indexes = await db.query(`
             SELECT indexname, indexdef
             FROM pg_indexes
             WHERE schemaname = 'public' AND tablename = $1
-          `, [tableName]),
-
-          db.query(`
+          `, [tableName]);
+        const constraints = await db.query(`
             SELECT constraint_name, constraint_type
             FROM information_schema.table_constraints
             WHERE table_schema = 'public' AND table_name = $1
-          `, [tableName])
-        ]);
+          `, [tableName]);
 
         return {
           content: [
@@ -1255,11 +1251,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
 
         try {
-          const [dbSize, connections, version] = await Promise.all([
-            db.query(`SELECT pg_database_size(current_database()) as size`),
-            db.query(`SELECT count(*) as count FROM pg_stat_activity WHERE datname = current_database()`),
-            db.query(`SELECT version()`)
-          ]);
+          const dbSize = await db.query(`SELECT pg_database_size(current_database()) as size`);
+          const connections = await db.query(`SELECT count(*) as count FROM pg_stat_activity WHERE datname = current_database()`);
+          const version = await db.query(`SELECT version()`);
 
           connectionInfo.database_size_bytes = parseInt(dbSize.rows[0].size);
           connectionInfo.database_size_mb = Math.round(dbSize.rows[0].size / 1024 / 1024 * 100) / 100;

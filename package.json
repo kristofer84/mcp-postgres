@@ -1,6 +1,6 @@
 {
   "name": "mcp-postgres",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Model Context Protocol server for PostgreSQL database operations",
   "main": "server.mjs",
   "bin": {
