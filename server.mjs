@@ -430,7 +430,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             values: {
               type: "object",
-              description: "Object with column names as keys and new values"
+              description: "Object with column names as keys and new values (alias: 'data')"
+            },
+            data: {
+              type: "object",
+              description: "Alias for 'values' — object with column names as keys and new values"
             },
             where: {
               type: "object",
@@ -841,11 +845,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "update_data": {
         const tableName = args?.table_name;
-        const values = args?.values;
+        const values = args?.values || args?.data;
         const where = args?.where;
 
         if (!tableName || !values || !where) {
-          throw new Error("table_name, values, and where are required");
+          throw new Error("table_name, values (or data), and where are required");
         }
 
         const quotedTable = quoteIdent(tableName);
