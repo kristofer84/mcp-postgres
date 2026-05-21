@@ -73,7 +73,9 @@ DB_PORT=5432
 DB_USER=postgres
 DB_PASSWORD=your_password
 DB_NAME=your_database
-DB_SSL_MODE=require  # Optional: require, disable, or omit for default
+DB_SSL_MODE=require       # Optional: require, disable, or omit for default
+DB_READ_ONLY=true         # Optional: disables all write and DDL tools server-side
+DB_STATEMENT_TIMEOUT=30000  # Optional: query timeout in ms (default: 30000)
 ```
 
 Alternative PostgreSQL-style variable names are also supported:
@@ -196,7 +198,72 @@ Checks the status of the AWS RDS certificate cache.
 
 ## Security
 
-For security reasons, only SELECT queries are allowed through the `execute_query` tool. This prevents accidental data modification through the MCP interface.
+### Read-Only Mode
+
+Set `DB_READ_ONLY=true` to disable all write and DDL tools at the server level. When enabled, the following tools are hidden from the tool list and will return an error if called:
+
+- `update_data`
+- `delete_data`
+- `insert_data`
+- `execute_raw_query`
+- `create_table`
+- `alter_table`
+
+```json
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "npx",
+      "args": ["mcp-postgres@latest"],
+      "env": {
+        "DB_HOST": "localhost",
+        "DB_READ_ONLY": "true",
+        ...
+      },
+      "autoApprove": ["list_tables", "get_schema"]
+    }
+  }
+}
+```
+
+This is enforced server-side — it cannot be bypassed by the MCP client, and is independent of the client's `autoApprove` list.
+
+### Least-Privilege Database Roles (Recommended)
+
+For defence in depth, connect with a PostgreSQL user that only has the permissions it needs. Even with `DB_READ_ONLY=true`, using a restricted database role ensures the server cannot accidentally or maliciously access data beyond its scope.
+
+**Read-only role** (schema inspection + SELECT):
+
+```sql
+CREATE ROLE mcp_readonly WITH LOGIN PASSWORD 'strong_password';
+-- Allow connecting to the database
+GRANT CONNECT ON DATABASE your_database TO mcp_readonly;
+-- Allow reading schema metadata
+GRANT USAGE ON SCHEMA public TO mcp_readonly;
+-- Allow SELECT on all current tables
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_readonly;
+-- Allow SELECT on future tables too
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO mcp_readonly;
+```
+
+**Read-write role** (no DDL):
+
+```sql
+CREATE ROLE mcp_readwrite WITH LOGIN PASSWORD 'strong_password';
+GRANT CONNECT ON DATABASE your_database TO mcp_readwrite;
+GRANT USAGE ON SCHEMA public TO mcp_readwrite;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO mcp_readwrite;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO mcp_readwrite;
+```
+
+This role can use all tools except `create_table`, `alter_table`, and `execute_raw_query` (which can run DDL). Consider whether those tools are needed and restrict accordingly.
+
+**What to avoid:** connecting as a superuser (`postgres`) or a user with `CREATEDB` / `CREATEROLE` privileges. If `execute_raw_query` is enabled, a superuser connection has no effective guardrails.
+
+### Query Safety
+
+Only SELECT queries are allowed through the `query_data` tool. The `execute_raw_query` tool has no such restriction — disable it via `DB_READ_ONLY=true` or use a role without write permissions if you don't need it.
 
 ## Testing
 

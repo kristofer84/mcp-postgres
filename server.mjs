@@ -150,6 +150,17 @@ function getCacheStatus() {
   };
 }
 
+// Read-only mode: set DB_READ_ONLY=true to disable all write and DDL tools
+const READ_ONLY_MODE = process.env.DB_READ_ONLY === 'true' || process.env.DB_READ_ONLY === '1';
+if (READ_ONLY_MODE) {
+  console.error('Read-only mode enabled: write and DDL tools are disabled');
+}
+
+const WRITE_TOOLS = new Set([
+  'update_data', 'delete_data', 'insert_data',
+  'execute_raw_query', 'create_table', 'alter_table'
+]);
+
 // Load configuration from multiple sources
 async function loadConfig() {
   // Try individual environment variables first (preferred method)
@@ -644,7 +655,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {}
         }
       }
-    ],
+    ].filter(tool => !READ_ONLY_MODE || !WRITE_TOOLS.has(tool.name)),
   };
 });
 
@@ -653,6 +664,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
+    if (READ_ONLY_MODE && WRITE_TOOLS.has(name)) {
+      throw new Error(`Tool '${name}' is disabled: server is running in read-only mode (DB_READ_ONLY=true)`);
+    }
+
     // Ensure connection is alive before executing any query
     await ensureConnection();
 
