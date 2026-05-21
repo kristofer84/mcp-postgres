@@ -33,19 +33,33 @@ async function runTest(name, testFn) {
 async function callTool(client, toolName, args = {}) {
   const result = await client.callTool({ name: toolName, arguments: args });
   const content = result.content[0];
-  if (content.type === "text") {
-    return JSON.parse(content.text);
-  }
-  throw new Error("Unexpected response type");
+  if (content.type !== "text") throw new Error("Unexpected response type");
+  if (result.isError) throw new Error(`Tool returned error: ${content.text}`);
+  return JSON.parse(content.text);
 }
 
-async function main() {
-  console.log(colors.blue("=".repeat(60)));
-  console.log(colors.blue("MCP Database Server - Tool Test Suite"));
-  console.log(colors.blue("=".repeat(60)));
+// Returns { isError, text } without JSON-parsing or throwing on server errors
+async function callToolRaw(client, toolName, args = {}) {
+  const result = await client.callTool({ name: toolName, arguments: args });
+  const content = result.content[0];
+  if (content.type !== "text") throw new Error("Unexpected response type");
+  return { isError: !!result.isError, text: content.text };
+}
 
-  // Start the MCP server
-  const transport = new StdioClientTransport({
+// Asserts the tool returns an error response and returns the error message text
+async function callToolExpectError(client, toolName, args = {}) {
+  const { isError, text } = await callToolRaw(client, toolName, args);
+  if (!isError) throw new Error(`Expected an error response but got success: ${text}`);
+  return text;
+}
+
+async function listToolNames(client) {
+  const result = await client.listTools();
+  return result.tools.map((t) => t.name);
+}
+
+function createServerTransport(envOverrides = {}) {
+  return new StdioClientTransport({
     command: "node",
     args: ["server.mjs"],
     env: {
@@ -55,15 +69,22 @@ async function main() {
       DB_USER: "postgres",
       DB_PASSWORD: "postgres",
       DB_NAME: TEST_DB,
+      ...envOverrides,
     },
   });
+}
 
+async function main() {
+  console.log(colors.blue("=".repeat(60)));
+  console.log(colors.blue("MCP Database Server - Tool Test Suite"));
+  console.log(colors.blue("=".repeat(60)));
+
+  // Start the MCP server
   const client = new Client(
     { name: "test-client", version: "1.0.0" },
     { capabilities: {} }
   );
-
-  await client.connect(transport);
+  await client.connect(createServerTransport());
   console.log(colors.green("✓ Connected to MCP server\n"));
 
   // Test 1: get_connection_status
@@ -294,6 +315,72 @@ async function main() {
     console.log(`  Certificate cache: ${result.aws_rds_certificate_cache.message}`);
   });
 
+  // Test 21: query_data rejects multi-statement queries
+  await runTest("query_data rejects multi-statement queries", async () => {
+    const errText = await callToolExpectError(client, "query_data", {
+      query: "SELECT 1; DROP TABLE test_users",
+    });
+    if (!errText.toLowerCase().includes("multi-statement")) {
+      throw new Error(`Unexpected error message: ${errText}`);
+    }
+    console.log(`  Correctly rejected: ${errText}`);
+  });
+
+  // Test 22: query_data rejects non-SELECT
+  await runTest("query_data rejects non-SELECT", async () => {
+    const errText = await callToolExpectError(client, "query_data", {
+      query: "DELETE FROM test_users WHERE 1=1",
+    });
+    if (!errText.toLowerCase().includes("select")) {
+      throw new Error(`Unexpected error message: ${errText}`);
+    }
+    console.log(`  Correctly rejected: ${errText}`);
+  });
+
+  // Test 23: quoteIdent handles table names with special characters
+  // A hyphenated name would have been silently mangled to "testhyphen" by the
+  // old regex-stripping approach; quoteIdent wraps it as "test-hyphen" instead.
+  await runTest("quoteIdent: table name with hyphen works across all DML tools", async () => {
+    await callTool(client, "create_table", {
+      table_name: "test-hyphen",
+      columns: [
+        { name: "id", type: "SERIAL", primary_key: true },
+        { name: "value", type: "TEXT" },
+      ],
+    });
+
+    const inserted = await callTool(client, "insert_data", {
+      table_name: "test-hyphen",
+      data: { value: "hello" },
+    });
+    if (inserted.inserted_rows !== 1) throw new Error("Insert failed");
+
+    const sampled = await callTool(client, "get_table_sample", {
+      table_name: "test-hyphen",
+      limit: 5,
+    });
+    if (sampled.sample_size !== 1) throw new Error("Sample failed");
+
+    const counted = await callTool(client, "count_rows", { table_name: "test-hyphen" });
+    if (counted.count !== 1) throw new Error("Count failed");
+
+    const updated = await callTool(client, "update_data", {
+      table_name: "test-hyphen",
+      values: { value: "world" },
+      where: { value: "hello" },
+    });
+    if (updated.updated_rows !== 1) throw new Error("Update failed");
+
+    const deleted = await callTool(client, "delete_data", {
+      table_name: "test-hyphen",
+      where: { value: "world" },
+    });
+    if (deleted.deleted_rows !== 1) throw new Error("Delete failed");
+
+    await callTool(client, "execute_raw_query", { query: 'DROP TABLE "test-hyphen"' });
+    console.log(`  All DML operations succeeded on hyphenated table name`);
+  });
+
   // Cleanup
   console.log(colors.yellow("\n🧹 Cleaning up test data..."));
   await callTool(client, "execute_raw_query", {
@@ -303,6 +390,62 @@ async function main() {
     query: "DROP TABLE IF EXISTS test_users CASCADE",
   });
   console.log(colors.green("✓ Cleanup complete"));
+
+  // Read-only mode tests (separate server instance)
+  console.log(colors.blue("\n" + "=".repeat(60)));
+  console.log(colors.blue("Read-Only Mode Tests (DB_READ_ONLY=true)"));
+  console.log(colors.blue("=".repeat(60)));
+
+  const WRITE_TOOLS = [
+    "update_data", "delete_data", "insert_data",
+    "execute_raw_query", "create_table", "alter_table",
+  ];
+  const READ_TOOLS = [
+    "list_tables", "get_schema", "query_data", "describe_table",
+    "get_table_sample", "check_certificate_cache", "count_rows",
+    "table_exists", "column_exists", "get_relationships", "get_connection_status",
+  ];
+
+  const roClient = new Client(
+    { name: "test-client-readonly", version: "1.0.0" },
+    { capabilities: {} }
+  );
+  await roClient.connect(createServerTransport({ DB_READ_ONLY: "true" }));
+  console.log(colors.green("✓ Connected to read-only MCP server\n"));
+
+  // Test 24: write tools absent from tool list
+  await runTest("read-only mode: write tools absent from tool list", async () => {
+    const toolNames = await listToolNames(roClient);
+    const present = WRITE_TOOLS.filter((t) => toolNames.includes(t));
+    if (present.length > 0) {
+      throw new Error(`Write tools should be hidden but found: ${present.join(", ")}`);
+    }
+    console.log(`  Write tools correctly hidden (${WRITE_TOOLS.join(", ")})`);
+  });
+
+  // Test 25: read tools still present
+  await runTest("read-only mode: read tools still available", async () => {
+    const toolNames = await listToolNames(roClient);
+    const missing = READ_TOOLS.filter((t) => !toolNames.includes(t));
+    if (missing.length > 0) {
+      throw new Error(`Read tools should be available but missing: ${missing.join(", ")}`);
+    }
+    console.log(`  All ${READ_TOOLS.length} read tools available`);
+  });
+
+  // Test 26: calling a write tool returns a clear read-only error
+  await runTest("read-only mode: write tool call returns read-only error", async () => {
+    const errText = await callToolExpectError(roClient, "insert_data", {
+      table_name: "any_table",
+      data: { col: "val" },
+    });
+    if (!errText.toLowerCase().includes("read-only")) {
+      throw new Error(`Expected read-only error but got: ${errText}`);
+    }
+    console.log(`  Correctly blocked: ${errText}`);
+  });
+
+  await roClient.close();
 
   // Summary
   console.log(colors.blue("\n" + "=".repeat(60)));
