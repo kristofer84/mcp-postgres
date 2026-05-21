@@ -150,6 +150,17 @@ function getCacheStatus() {
   };
 }
 
+// Read-only mode: set DB_READ_ONLY=true to disable all write and DDL tools
+const READ_ONLY_MODE = process.env.DB_READ_ONLY === 'true' || process.env.DB_READ_ONLY === '1';
+if (READ_ONLY_MODE) {
+  console.error('Read-only mode enabled: write and DDL tools are disabled');
+}
+
+const WRITE_TOOLS = new Set([
+  'update_data', 'delete_data', 'insert_data',
+  'execute_raw_query', 'create_table', 'alter_table'
+]);
+
 // Load configuration from multiple sources
 async function loadConfig() {
   // Try individual environment variables first (preferred method)
@@ -644,7 +655,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {}
         }
       }
-    ],
+    ].filter(tool => !READ_ONLY_MODE || !WRITE_TOOLS.has(tool.name)),
   };
 });
 
@@ -653,6 +664,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
+    if (READ_ONLY_MODE && WRITE_TOOLS.has(name)) {
+      throw new Error(`Tool '${name}' is disabled: server is running in read-only mode (DB_READ_ONLY=true)`);
+    }
+
     // Ensure connection is alive before executing any query
     await ensureConnection();
 
@@ -694,11 +709,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error("Query is required");
         }
 
-        // Safety check - only allow SELECT statements
-        // Normalize query to handle comments and whitespace
+        // Safety check - only allow a single SELECT statement.
+        // Normalize first to strip comments that could hide additional statements.
         const normalizedQuery = normalizeQuery(query);
         if (!normalizedQuery.startsWith("select")) {
           throw new Error("Only SELECT queries are allowed for safety");
+        }
+        // Block multi-statement queries (e.g. SELECT 1; DROP TABLE foo).
+        // Strip string literals first so semicolons inside values (e.g. WHERE col = 'a;b')
+        // are not falsely flagged. Handles standard '' escape sequences.
+        const queryStructure = normalizedQuery.replace(/'(?:[^']|'')*'/g, "''");
+        if (queryStructure.includes(";")) {
+          throw new Error("Multi-statement queries are not allowed");
         }
 
         const startTime = Date.now();
@@ -784,11 +806,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error("Table name is required");
         }
 
-        // Use parameterized query for table name safety
-        const result = await db.query(`
-          SELECT * FROM ${tableName.replace(/[^a-zA-Z0-9_]/g, '')} 
-          LIMIT $1
-        `, [limit]);
+        const result = await db.query(`SELECT * FROM ${quoteIdent(tableName)} LIMIT $1`, [limit]);
 
         return {
           content: [
@@ -830,7 +848,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error("table_name, values, and where are required");
         }
 
-        const sanitizedTable = tableName.replace(/[^a-zA-Z0-9_]/g, '');
+        const quotedTable = quoteIdent(tableName);
         const limitVal = Math.min(args?.limit ?? 1000, 10000);
 
         // Build SET clause with quoted column names
@@ -847,7 +865,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (args?.dry_run) {
           const whereClauseForSelect = whereColumns.map((col, idx) => `${quoteIdent(col)} = $${idx + 1}`).join(' AND ');
           const previewResult = await db.query(
-            `SELECT * FROM ${sanitizedTable} WHERE ${whereClauseForSelect} LIMIT $${whereColumns.length + 1}`,
+            `SELECT * FROM ${quotedTable} WHERE ${whereClauseForSelect} LIMIT $${whereColumns.length + 1}`,
             [...Object.values(where), limitVal]
           );
           return {
@@ -868,7 +886,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         queryParams.push(limitVal);
 
         const startTime = Date.now();
-        const query = `UPDATE ${sanitizedTable} SET ${setClause} WHERE ctid IN (SELECT ctid FROM ${sanitizedTable} WHERE ${whereClause} LIMIT $${limitParamIdx}) RETURNING *`;
+        const query = `UPDATE ${quotedTable} SET ${setClause} WHERE ctid IN (SELECT ctid FROM ${quotedTable} WHERE ${whereClause} LIMIT $${limitParamIdx}) RETURNING *`;
         const result = await db.query(query, queryParams);
         const executionTime = Date.now() - startTime;
 
@@ -892,7 +910,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error("table_name and where are required");
         }
 
-        const sanitizedTable = tableName.replace(/[^a-zA-Z0-9_]/g, '');
+        const quotedTable = quoteIdent(tableName);
         const limitVal = Math.min(args?.limit ?? 1000, 10000);
 
         // Build WHERE clause with quoted column names
@@ -903,7 +921,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // dry_run: preview affected rows without deleting
         if (args?.dry_run) {
           const previewResult = await db.query(
-            `SELECT * FROM ${sanitizedTable} WHERE ${whereClause} LIMIT $${queryParams.length + 1}`,
+            `SELECT * FROM ${quotedTable} WHERE ${whereClause} LIMIT $${queryParams.length + 1}`,
             [...queryParams, limitVal]
           );
           return {
@@ -923,7 +941,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         queryParams.push(limitVal);
 
         const startTime = Date.now();
-        const query = `DELETE FROM ${sanitizedTable} WHERE ctid IN (SELECT ctid FROM ${sanitizedTable} WHERE ${whereClause} LIMIT $${limitParamIdx}) RETURNING *`;
+        const query = `DELETE FROM ${quotedTable} WHERE ctid IN (SELECT ctid FROM ${quotedTable} WHERE ${whereClause} LIMIT $${limitParamIdx}) RETURNING *`;
         const result = await db.query(query, queryParams);
         const executionTime = Date.now() - startTime;
 
@@ -947,13 +965,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error("table_name and data are required");
         }
 
-        const sanitizedTable = tableName.replace(/[^a-zA-Z0-9_]/g, '');
         const columns = Object.keys(data);
         const values = Object.values(data);
         const placeholders = columns.map((_, idx) => `$${idx + 1}`).join(', ');
 
         const startTime = Date.now();
-        const query = `INSERT INTO ${sanitizedTable} (${columns.map(quoteIdent).join(', ')}) VALUES (${placeholders}) RETURNING *`;
+        const query = `INSERT INTO ${quoteIdent(tableName)} (${columns.map(quoteIdent).join(', ')}) VALUES (${placeholders}) RETURNING *`;
         const result = await db.query(query, values);
         const executionTime = Date.now() - startTime;
 
@@ -1006,8 +1023,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error("table_name is required");
         }
 
-        const sanitizedTable = tableName.replace(/[^a-zA-Z0-9_]/g, '');
-        let query = `SELECT COUNT(*) as count FROM ${sanitizedTable}`;
+        let query = `SELECT COUNT(*) as count FROM ${quoteIdent(tableName)}`;
         let queryParams = [];
 
         if (where && Object.keys(where).length > 0) {
@@ -1145,8 +1161,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error("table_name and columns array are required");
         }
 
-        const sanitizedTable = tableName.replace(/[^a-zA-Z0-9_]/g, '');
-        
         const columnDefs = columns.map(col => {
           let def = `${quoteIdent(col.name)} ${sanitizeType(col.type)}`;
           if (col.primary_key) def += ' PRIMARY KEY';
@@ -1156,7 +1170,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           return def;
         }).join(', ');
 
-        const query = `CREATE TABLE ${sanitizedTable} (${columnDefs})`;
+        const query = `CREATE TABLE ${quoteIdent(tableName)} (${columnDefs})`;
         const startTime = Date.now();
         await db.query(query);
         const executionTime = Date.now() - startTime;
@@ -1185,7 +1199,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error("table_name, action, and column_name are required");
         }
 
-        const sanitizedTable = tableName.replace(/[^a-zA-Z0-9_]/g, '');
+        const quotedTable = quoteIdent(tableName);
         let query;
 
         switch (action) {
@@ -1193,27 +1207,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (!args.column_type) {
               throw new Error("column_type is required for add_column");
             }
-            query = `ALTER TABLE ${sanitizedTable} ADD COLUMN ${quoteIdent(columnName)} ${sanitizeType(args.column_type)}`;
+            query = `ALTER TABLE ${quotedTable} ADD COLUMN ${quoteIdent(columnName)} ${sanitizeType(args.column_type)}`;
             if (args.nullable === false) query += ' NOT NULL';
             if (args.default_value !== undefined) query += ` DEFAULT ${sanitizeDefault(args.default_value)}`;
             break;
 
           case "drop_column":
-            query = `ALTER TABLE ${sanitizedTable} DROP COLUMN ${quoteIdent(columnName)}`;
+            query = `ALTER TABLE ${quotedTable} DROP COLUMN ${quoteIdent(columnName)}`;
             break;
 
           case "rename_column":
             if (!args.new_column_name) {
               throw new Error("new_column_name is required for rename_column");
             }
-            query = `ALTER TABLE ${sanitizedTable} RENAME COLUMN ${quoteIdent(columnName)} TO ${quoteIdent(args.new_column_name)}`;
+            query = `ALTER TABLE ${quotedTable} RENAME COLUMN ${quoteIdent(columnName)} TO ${quoteIdent(args.new_column_name)}`;
             break;
 
           case "alter_column_type":
             if (!args.column_type) {
               throw new Error("column_type is required for alter_column_type");
             }
-            query = `ALTER TABLE ${sanitizedTable} ALTER COLUMN ${quoteIdent(columnName)} TYPE ${sanitizeType(args.column_type)}`;
+            query = `ALTER TABLE ${quotedTable} ALTER COLUMN ${quoteIdent(columnName)} TYPE ${sanitizeType(args.column_type)}`;
             break;
 
           default:
