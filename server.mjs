@@ -715,8 +715,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!normalizedQuery.startsWith("select")) {
           throw new Error("Only SELECT queries are allowed for safety");
         }
-        // Block multi-statement queries (e.g. SELECT 1; DROP TABLE foo)
-        if (normalizedQuery.includes(";")) {
+        // Block multi-statement queries (e.g. SELECT 1; DROP TABLE foo).
+        // Strip string literals first so semicolons inside values (e.g. WHERE col = 'a;b')
+        // are not falsely flagged. Handles standard '' escape sequences.
+        const queryStructure = normalizedQuery.replace(/'(?:[^']|'')*'/g, "''");
+        if (queryStructure.includes(";")) {
           throw new Error("Multi-statement queries are not allowed");
         }
 

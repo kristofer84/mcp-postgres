@@ -326,6 +326,15 @@ async function main() {
     console.log(`  Correctly rejected: ${errText}`);
   });
 
+  // Test 21b: query_data allows semicolons inside string literals
+  await runTest("query_data allows semicolons inside string literals", async () => {
+    const result = await callTool(client, "query_data", {
+      query: "SELECT * FROM test_users WHERE name != 'a;b'",
+    });
+    if (typeof result.rowCount === "undefined") throw new Error("Expected rowCount in result");
+    console.log(`  Query with semicolon in string literal returned ${result.rowCount} rows`);
+  });
+
   // Test 22: query_data rejects non-SELECT
   await runTest("query_data rejects non-SELECT", async () => {
     const errText = await callToolExpectError(client, "query_data", {
