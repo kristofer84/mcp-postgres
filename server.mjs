@@ -8,6 +8,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { Client } from "pg";
+import { gateWriteTool, requireEnabled } from "./sqlguard-authorize.mjs";
 
 // AWS RDS Certificate Management
 const AWS_RDS_CERT_URL = "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem";
@@ -160,6 +161,10 @@ const WRITE_TOOLS = new Set([
   'update_data', 'delete_data', 'insert_data',
   'execute_raw_query', 'create_table', 'alter_table'
 ]);
+
+if (requireEnabled()) {
+  console.error('SQLGuard authorize-before-mutate enabled (SQLGUARD_REQUIRE): write tools need verified PASS');
+}
 
 // Load configuration from multiple sources
 async function loadConfig() {
@@ -670,6 +675,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     if (READ_ONLY_MODE && WRITE_TOOLS.has(name)) {
       throw new Error(`Tool '${name}' is disabled: server is running in read-only mode (DB_READ_ONLY=true)`);
+    }
+
+    if (WRITE_TOOLS.has(name)) {
+      const blocked = await gateWriteTool(name, args || {});
+      if (blocked) {
+        throw new Error(blocked);
+      }
     }
 
     // Ensure connection is alive before executing any query
