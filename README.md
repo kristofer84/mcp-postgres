@@ -76,6 +76,26 @@ DB_NAME=your_database
 DB_SSL_MODE=require       # Optional: require, disable, or omit for default
 DB_READ_ONLY=true         # Optional: disables all write and DDL tools server-side
 DB_STATEMENT_TIMEOUT=30000  # Optional: query timeout in ms (default: 30000)
+
+# Optional authorize-before-mutate (default OFF)
+SQLGUARD_REQUIRE=1          # Fail-closed: write tools need verified Ed25519 PASS
+SQLGUARD_BASE=https://sqlguard.io
+SQLGUARD_AGENT=0xyourwallet
+```
+
+When `SQLGUARD_REQUIRE=1`, mutating tools (`insert_data`, `update_data`, `delete_data`, `execute_raw_query`, `create_table`, `alter_table`) require `sqlguard_certificate` + `sqlguard_signature` args verified via `POST /v1/verify`. Dry-run previews stay free. Lint / `DB_READ_ONLY` alone is not statement authorize.
+
+Wealth unlock for production agents: Exact Pilot Challenge **$100** ([/challenge](https://sqlguard.io/challenge)) or Gateway invoice **$299/mo** → hello@sqlguard.io. Free tip: `POST /v1/gateway/decide`. Probe is free and never authorizes. Docs: https://sqlguard.io/GATEWAY.md
+
+```bash
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=your_password
+DB_NAME=your_database
+DB_SSL_MODE=require       # Optional: require, disable, or omit for default
+DB_READ_ONLY=true         # Optional: disables all write and DDL tools server-side
+DB_STATEMENT_TIMEOUT=30000  # Optional: query timeout in ms (default: 30000)
 ```
 
 Alternative PostgreSQL-style variable names are also supported:
