@@ -1,6 +1,6 @@
 {
   "name": "mcp-postgres",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Model Context Protocol server for PostgreSQL database operations",
   "main": "server.mjs",
   "bin": {
@@ -29,14 +29,15 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.18.1",
-    "pg": "^8.16.3"
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "pg": "^8.23.1"
   },
   "files": [
     "server.mjs",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ]
 }

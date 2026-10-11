@@ -16,6 +16,8 @@ Or run it directly with npx:
 npx mcp-postgres@latest
 ```
 
+Requires Node.js 22 or newer.
+
 ## Configuration
 
 ### MCP Client Configuration
