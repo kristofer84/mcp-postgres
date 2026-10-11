@@ -1,6 +1,6 @@
 {
   "name": "mcp-postgres",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Model Context Protocol server for PostgreSQL database operations",
   "main": "server.mjs",
   "bin": {
@@ -8,7 +8,10 @@
   },
   "scripts": {
     "start": "node server.mjs",
-    "test": "node test-tools.mjs"
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "node --test test/",
+    "test:integration": "node test-tools.mjs",
+    "lint": "eslint ."
   },
   "keywords": [
     "mcp",
@@ -37,7 +40,11 @@
   },
   "files": [
     "server.mjs",
+    "src/",
     "README.md",
     "CHANGELOG.md"
-  ]
+  ],
+  "devDependencies": {
+    "eslint": "^10.12.0"
+  }
 }

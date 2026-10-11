@@ -18,13 +18,23 @@ createdb -U postgres test
 
 ## Run Tests
 
+Unit tests need no database and cover the pure helpers:
+
 ```bash
-node test-tools.mjs
+npm run test:unit
+```
+
+Integration tests need the PostgreSQL setup above:
+
+```bash
+npm run test:integration
+# or both suites
+npm test
 ```
 
 ## What Gets Tested
 
-The test suite covers all 17 tools with 20 test cases:
+The integration suite covers all 17 tools with 27 test cases:
 
 1. ✅ get_connection_status - Verify database connection
 2. ✅ create_table - Create test_users table

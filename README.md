@@ -1,5 +1,8 @@
 # MCP PostgreSQL Server
 
+[![npm version](https://img.shields.io/npm/v/mcp-postgres.svg)](https://www.npmjs.com/package/mcp-postgres)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A Model Context Protocol (MCP) server that provides PostgreSQL database access and operations.
 
 ## Installation
@@ -296,6 +299,26 @@ Once configured in your `.kiro/settings/mcp.json`, you can test the tools direct
 - "List all tables in the database"
 - "Show me the schema for the users table"
 - "Execute this query: SELECT \* FROM products WHERE price > 100"
+
+## Project Structure
+
+```
+server.mjs          Entry point: server wiring and shutdown handling
+src/
+  sql.mjs           Pure helpers: quoting, validation, query checks
+  ssl.mjs           AWS RDS certificate handling and SSL config
+  config.mjs        Configuration loading
+  db.mjs            Database connection lifecycle
+  tools/
+    index.mjs       Tool definitions and dispatch
+    read.mjs        Read-only tool handlers
+    write.mjs       Write and DDL tool handlers
+test/
+  sql.test.mjs      Unit tests for the pure helpers
+test-tools.mjs      Integration tests (need a running PostgreSQL)
+```
+
+Run `npm run test:unit` for the unit tests and `npm test` for everything.
 
 ## License
 

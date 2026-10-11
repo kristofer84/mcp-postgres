@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented here.
 
+## [1.4.1]
+
+Stability and quality fixes.
+
+### Changed
+- Split the 1,300-line `server.mjs` into focused modules under `src/`: `sql.mjs` (pure helpers), `ssl.mjs`, `config.mjs`, `db.mjs`, and `src/tools/` (schemas plus read and write handlers). `server.mjs` is now a thin entry point that wires the server together.
+
+### Fixed
+- The server now reports its real name and version (`mcp-postgres`) instead of the hardcoded `mcp-db-server` 1.0.0.
+- Added a timeout to the AWS RDS certificate download, so a stalled download no longer hangs startup.
+- Added a connection timeout to the database client, so an unreachable host fails fast.
+- Reconnection no longer reads `pg` private fields, and concurrent reconnects are collapsed into one attempt.
+- Exit on stdin close. The MCP stdio transport does not emit close on stdin EOF, so the `pg` socket used to keep the process alive as an orphan.
+
+### Added
+- Graceful shutdown on `SIGINT`, `SIGTERM`, stdin EOF, and client disconnect.
+- `unhandledRejection` and `uncaughtException` handlers.
+- Runtime validation for tool arguments, since the client-supplied `inputSchema` is advisory only.
+- Unit tests using `node:test` for the pure helpers, run with `npm run test:unit`.
+- ESLint with a `lint` script, wired into CI.
+- `LICENSE`, `SECURITY.md`, `.nvmrc`, and a Dependabot config.
+
 ## [1.4.0]
 
 Maintenance release. No API changes.
