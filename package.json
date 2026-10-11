@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node server.mjs",
     "test": "npm run test:unit && npm run test:integration",
-    "test:unit": "node --test test/",
+    "test:unit": "node --test \"test/**/*.test.mjs\"",
     "test:integration": "node test-tools.mjs",
     "lint": "eslint ."
   },
