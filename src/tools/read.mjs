@@ -1,6 +1,7 @@
-import { requireString, optionalObject, clampLimit, quoteIdent, assertSingleSelect } from "../sql.mjs";
+import { requireString, optionalObject, clampLimit, quoteIdent, assertSingleSelect, extractFunctionCalls } from "../sql.mjs";
 import { getCacheStatus, CERT_CACHE_DIR, AWS_RDS_CERT_URL } from "../ssl.mjs";
-import { getDbConfig, isConnectionHealthy } from "../db.mjs";
+import { getDbConfig, isConnectionHealthy, runInReadOnlyTransaction } from "../db.mjs";
+import { READ_ONLY_MODE } from "../config.mjs";
 
 const asText = (payload) => ({
   content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
@@ -22,12 +23,53 @@ export async function getSchema(args, db) {
   return asText(result.rows);
 }
 
+// Reject VOLATILE functions in read-only mode. A read-only transaction stops a
+// function from writing through the current connection, but functions such as
+// dblink_exec() can open a second connection and write through that instead.
+// Volatile functions are the ones PostgreSQL allows to have side effects, so
+// refusing them closes that escape hatch without relying on a name denylist.
+async function assertNoVolatileFunctions(query, db) {
+  const setting = await db.query(`SELECT current_setting('standard_conforming_strings') AS value`);
+  const calls = extractFunctionCalls(query, {
+    standardConformingStrings: setting.rows[0]?.value !== 'off',
+  });
+  if (calls.length === 0) return;
+
+  const names = [...new Set(calls.map((call) => call.name))];
+  const result = await db.query(`
+    SELECT n.nspname AS schema, p.proname AS name, p.provolatile,
+           pg_catalog.pg_function_is_visible(p.oid) AS visible
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE p.proname = ANY($1::text[])
+  `, [names]);
+
+  for (const call of calls) {
+    const matches = result.rows.filter((row) => (
+      row.name === call.name
+      && (call.schema === null ? row.visible : row.schema === call.schema)
+    ));
+
+    if (matches.some((row) => row.provolatile === 'v')) {
+      const displayName = call.schema === null ? call.name : `${call.schema}.${call.name}`;
+      throw new Error(
+        `Function '${displayName}' is not allowed in read-only mode: it is VOLATILE and may have side effects`
+      );
+    }
+  }
+}
+
 export async function queryData(args, db) {
   const query = requireString(args?.query, "query");
   assertSingleSelect(query);
 
   const startTime = Date.now();
-  const result = await db.query(query);
+  const result = READ_ONLY_MODE
+    ? await runInReadOnlyTransaction(db, async (client) => {
+      await assertNoVolatileFunctions(query, client);
+      return client.query(query);
+    })
+    : await db.query(query);
   const executionTime = Date.now() - startTime;
 
   return asText({

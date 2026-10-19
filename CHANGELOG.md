@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented here.
 
+## [1.4.2]
+
+Security release.
+
+### Security
+- Read-only mode now enforces `default_transaction_read_only = on` on the database session and runs every `query_data` call inside an explicit `BEGIN TRANSACTION READ ONLY` block. Write-capable functions reached through a `SELECT` can no longer modify data on the current connection.
+- In read-only mode, `query_data` now rejects calls to `VOLATILE` PostgreSQL functions. This blocks `dblink_exec()` and similar functions that open a second connection and write outside the current read-only transaction. The check resolves functions through `pg_proc` instead of relying on a function-name denylist.
+- Fixed a multi-statement check bypass where a comment marker inside a string literal (for example `SELECT '--'; DROP TABLE users`) was stripped before the string literal, hiding the second statement from `assertSingleSelect()`.
+- `assertSingleSelect()` now strips comments, ordinary strings, `E''` strings, and dollar-quoted strings in a single pass, and correctly allows semicolons inside dollar-quoted strings.
+
+### Changed
+- The read-only mode log message now also mentions database-session enforcement.
+- Documentation clarifies that a SELECT-only database role remains the strongest boundary for read-only deployments.
+
+### Credit
+- Thanks to Syed Anas Mohiuddin (Cognivators LLC) for reporting the read-only mode bypass via `dblink_exec` and for suggesting database-enforced read-only.
+
 ## [1.4.1]
 
 Stability and quality fixes.

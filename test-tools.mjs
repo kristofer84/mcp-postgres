@@ -326,6 +326,17 @@ async function main() {
     console.log(`  Correctly rejected: ${errText}`);
   });
 
+  // Test 21a: comment markers inside a string cannot hide a second statement
+  await runTest("query_data rejects a statement hidden after a string comment marker", async () => {
+    const errText = await callToolExpectError(client, "query_data", {
+      query: "SELECT '--'; DROP TABLE test_users",
+    });
+    if (!errText.toLowerCase().includes("multi-statement")) {
+      throw new Error(`Unexpected error message: ${errText}`);
+    }
+    console.log(`  Correctly rejected: ${errText}`);
+  });
+
   // Test 21b: query_data allows semicolons inside string literals
   await runTest("query_data allows semicolons inside string literals", async () => {
     const result = await callTool(client, "query_data", {
@@ -450,6 +461,57 @@ async function main() {
     });
     if (!errText.toLowerCase().includes("read-only")) {
       throw new Error(`Expected read-only error but got: ${errText}`);
+    }
+    console.log(`  Correctly blocked: ${errText}`);
+  });
+
+  // Test 27: query_data cannot use a volatile function to disable read-only mode
+  await runTest("read-only mode: query_data blocks volatile functions", async () => {
+    const errText = await callToolExpectError(roClient, "query_data", {
+      query: "SELECT set_config('default_transaction_read_only', 'off', false)",
+    });
+    if (!errText.includes("VOLATILE")) {
+      throw new Error(`Expected volatile-function error but got: ${errText}`);
+    }
+    console.log(`  Correctly blocked: ${errText}`);
+  });
+
+  // Test 28: the session is still read-only after the attempted bypass
+  await runTest("read-only mode: session remains read-only after bypass attempt", async () => {
+    const result = await callTool(roClient, "query_data", {
+      query: "SELECT current_setting('transaction_read_only') AS value",
+    });
+    if (result.rows[0].value !== "on") {
+      throw new Error(`Expected a read-only transaction, got: ${result.rows[0].value}`);
+    }
+    console.log(`  transaction_read_only = ${result.rows[0].value}`);
+  });
+
+  // Test 29: the database itself rejects SELECT INTO in read-only mode
+  await runTest("read-only mode: query_data SELECT INTO is rejected by Postgres", async () => {
+    const errText = await callToolExpectError(roClient, "query_data", {
+      query: "SELECT 1 AS value INTO ro_should_not_exist",
+    });
+    if (!errText.toLowerCase().includes("read-only")) {
+      throw new Error(`Expected read-only transaction error but got: ${errText}`);
+    }
+    console.log(`  Correctly blocked: ${errText}`);
+  });
+
+  // Test 30: dblink_exec is blocked when the extension is available
+  await runTest("read-only mode: query_data blocks dblink_exec", async () => {
+    const installed = await callTool(client, "query_data", {
+      query: "SELECT count(*)::int AS count FROM pg_extension WHERE extname = 'dblink'",
+    });
+    if (installed.rows[0].count === 0) {
+      console.log("  Skipped: dblink extension is not installed");
+      return;
+    }
+    const errText = await callToolExpectError(roClient, "query_data", {
+      query: "SELECT dblink_exec('dbname=test', 'SELECT 1')",
+    });
+    if (!errText.includes("dblink_exec") || !errText.includes("VOLATILE")) {
+      throw new Error(`Expected dblink_exec to be blocked but got: ${errText}`);
     }
     console.log(`  Correctly blocked: ${errText}`);
   });

@@ -1,10 +1,11 @@
 import * as read from "./read.mjs";
 import * as write from "./write.mjs";
+import { READ_ONLY_MODE } from "../config.mjs";
 
 // Read-only mode: set DB_READ_ONLY=true to disable all write and DDL tools
-export const READ_ONLY_MODE = process.env.DB_READ_ONLY === 'true' || process.env.DB_READ_ONLY === '1';
+export { READ_ONLY_MODE };
 if (READ_ONLY_MODE) {
-  console.error('Read-only mode enabled: write and DDL tools are disabled');
+  console.error('Read-only mode enabled: write and DDL tools are disabled, and the database session is read-only');
 }
 
 export const WRITE_TOOLS = new Set([

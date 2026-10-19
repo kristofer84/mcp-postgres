@@ -7,6 +7,7 @@ import {
   sanitizeType,
   sanitizeDefault,
   assertSingleSelect,
+  extractFunctionCalls,
   requireString,
   requireObject,
   optionalObject,
@@ -69,6 +70,52 @@ test("assertSingleSelect rejects non-select queries", () => {
 test("assertSingleSelect rejects multi-statement queries", () => {
   assert.throws(() => assertSingleSelect("SELECT 1; DROP TABLE users"), /Multi-statement/);
   assert.throws(() => assertSingleSelect("SELECT 1 /* x */; SELECT 2"), /Multi-statement/);
+});
+
+test("assertSingleSelect cannot be fooled by comment markers inside strings", () => {
+  assert.throws(() => assertSingleSelect("SELECT '--'; DROP TABLE users"), /Multi-statement/);
+  assert.throws(() => assertSingleSelect("SELECT '/*'; DROP TABLE users"), /Multi-statement/);
+});
+
+test("assertSingleSelect allows semicolons inside dollar-quoted strings", () => {
+  assert.doesNotThrow(() => assertSingleSelect("SELECT $$a;b$$ AS value"));
+  assert.throws(() => assertSingleSelect("SELECT $$a;b$$; DROP TABLE users"), /Multi-statement/);
+});
+
+test("extractFunctionCalls finds plain and schema-qualified calls", () => {
+  const calls = extractFunctionCalls("SELECT dblink_exec('dbname=x', 'UPDATE t'), pg_catalog.set_config('a','b',false)");
+  assert.deepEqual(calls, [
+    { schema: null, name: 'dblink_exec' },
+    { schema: 'pg_catalog', name: 'set_config' },
+  ]);
+});
+
+test("extractFunctionCalls ignores strings, comments, and dollar quotes", () => {
+  const query = `
+    SELECT 'dblink_exec(1)' AS text,
+           "dblink_exec"('x'),
+           $$nextval('x')$$ AS literal,
+           count(*) AS n
+    FROM users
+  `;
+  assert.deepEqual(extractFunctionCalls(query), [
+    { schema: null, name: 'dblink_exec' },
+    { schema: null, name: 'count' },
+  ]);
+});
+
+test("extractFunctionCalls handles quoted identifiers and escaped strings", () => {
+  assert.deepEqual(
+    extractFunctionCalls('SELECT "public"."dblink_exec"(E\'x\\\'y\', \'z\')'),
+    [{ schema: 'public', name: 'dblink_exec' }]
+  );
+});
+
+test("extractFunctionCalls rejects Unicode-escaped identifiers", () => {
+  assert.throws(
+    () => extractFunctionCalls('SELECT U&"\\0064blink_exec"(\'x\')'),
+    /Unicode-escaped identifiers/
+  );
 });
 
 test("requireString enforces non-empty strings", () => {

@@ -1,5 +1,5 @@
 import { Client } from "pg";
-import { loadConfig } from "./config.mjs";
+import { loadConfig, READ_ONLY_MODE } from "./config.mjs";
 
 // Fail fast on an unreachable host instead of hanging
 const DB_CONNECT_TIMEOUT_MS = parseInt(process.env.DB_CONNECT_TIMEOUT_MS) || 10000;
@@ -9,6 +9,8 @@ let dbConfig = null;
 // Track health explicitly instead of reading pg internals
 let isConnected = false;
 let reconnectPromise = null;
+// Serialize read-only query transactions: the server uses a single pg Client
+let readOnlyQueue = Promise.resolve();
 
 export function getDb() {
   return db;
@@ -58,6 +60,14 @@ export async function initializeApp() {
       // Apply a default 30-second statement timeout to prevent runaway queries
       const timeoutMs = parseInt(process.env.DB_STATEMENT_TIMEOUT) || 30000;
       await db.query(`SET statement_timeout = ${timeoutMs}`);
+
+      // Enforce read-only mode at the database level too. This catches write
+      // paths that bypass the tool filter (for example SELECT INTO or a
+      // write-capable function called from a SELECT).
+      if (READ_ONLY_MODE) {
+        await db.query('SET default_transaction_read_only = on');
+      }
+
       isConnected = true;
       console.error(`Connected to database: ${config.db.host}:${config.db.port}/${config.db.database}`);
       break;
@@ -90,6 +100,40 @@ export async function ensureConnection() {
     });
   }
   await reconnectPromise;
+}
+
+// Run a function inside an explicit READ ONLY transaction. This is stronger
+// than the session default alone, because a query cannot use set_config() to
+// switch the default off for the next statement. Calls are serialized because
+// the server shares one pg Client.
+export function runInReadOnlyTransaction(client, fn) {
+  const run = async () => {
+    let inTransaction = false;
+    try {
+      await client.query('BEGIN TRANSACTION READ ONLY');
+      inTransaction = true;
+      return await fn(client);
+    } finally {
+      if (inTransaction) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (error) {
+          console.error('Error rolling back read-only transaction:', error.message);
+        }
+      }
+      // Re-assert the session default in case the query changed it.
+      try {
+        await client.query('SET default_transaction_read_only = on');
+      } catch (error) {
+        console.error('Error restoring read-only session setting:', error.message);
+      }
+    }
+  };
+
+  const result = readOnlyQueue.then(run, run);
+  // Keep the queue alive even when a query fails.
+  readOnlyQueue = result.then(() => {}, () => {});
+  return result;
 }
 
 export async function closeConnection() {

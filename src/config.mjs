@@ -2,6 +2,9 @@ import fs from "fs";
 import path from "path";
 import { buildSslConfig } from "./ssl.mjs";
 
+// Read-only mode is a process-wide setting, not just a tool-list filter.
+export const READ_ONLY_MODE = process.env.DB_READ_ONLY === 'true' || process.env.DB_READ_ONLY === '1';
+
 // Load configuration from environment variables, DATABASE_URL, or config.json
 export async function loadConfig() {
   // Try individual environment variables first (preferred method)

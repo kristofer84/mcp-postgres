@@ -109,6 +109,7 @@
 4. **Parameterized Queries**: Protection against SQL injection
 5. **Table Name Sanitization**: Prevents SQL injection via table names
 6. **Connection Monitoring**: Auto-reconnect on connection loss
+7. **Read-Only Enforcement**: `DB_READ_ONLY=true` hides write tools, makes the database session read-only, and rejects volatile functions through `query_data`
 
 ## Total Tools: 17
 

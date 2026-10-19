@@ -79,7 +79,7 @@ DB_USER=postgres
 DB_PASSWORD=your_password
 DB_NAME=your_database
 DB_SSL_MODE=require       # Optional: require, disable, or omit for default
-DB_READ_ONLY=true         # Optional: disables all write and DDL tools server-side
+DB_READ_ONLY=true         # Optional: disables write/DDL tools and makes the DB session read-only
 DB_STATEMENT_TIMEOUT=30000  # Optional: query timeout in ms (default: 30000)
 ```
 
@@ -233,9 +233,19 @@ Set `DB_READ_ONLY=true` to disable all write and DDL tools at the server level. 
 
 This is enforced server-side — it cannot be bypassed by the MCP client, and is independent of the client's `autoApprove` list.
 
+Read-only mode is enforced at three levels:
+
+1. Write and DDL tools are hidden and rejected.
+2. The database session uses `default_transaction_read_only = on`.
+3. Every `query_data` call runs inside an explicit `BEGIN TRANSACTION READ ONLY` block, so a query cannot switch the session back to read-write for a later statement.
+
+In read-only mode, `query_data` also rejects calls to `VOLATILE` PostgreSQL functions. Volatile functions are the ones PostgreSQL allows to have side effects, which includes `dblink_exec()` and similar functions that can open a second connection and write outside the current read-only transaction. This is enforced by looking up the function in `pg_proc`, not by matching a fixed list of names. A few harmless volatile functions (for example `random()`) are also rejected while `DB_READ_ONLY=true`.
+
+`query_data` in read-only mode is intended for ordinary `SELECT` queries and built-in read-only functions. If you need extension functions that are genuinely read-only, they will work when they are marked `STABLE` or `IMMUTABLE`. For the strongest isolation, still connect with a SELECT-only database role — that also covers functions, operators, or type input functions that declare themselves non-volatile while performing external actions.
+
 ### Least-Privilege Database Roles (Recommended)
 
-For defence in depth, connect with a PostgreSQL user that only has the permissions it needs. Even with `DB_READ_ONLY=true`, using a restricted database role ensures the server cannot accidentally or maliciously access data beyond its scope.
+For defence in depth, connect with a PostgreSQL user that only has the permissions it needs. Even with `DB_READ_ONLY=true`, using a restricted database role ensures the server cannot accidentally or maliciously access data beyond its scope. A SELECT-only role is the strongest boundary and is the recommended setup for any server exposed to untrusted callers.
 
 **Read-only role** (schema inspection + SELECT):
 
@@ -268,7 +278,7 @@ This role can use all tools except `create_table`, `alter_table`, and `execute_r
 
 ### Query Safety
 
-Only SELECT queries are allowed through the `query_data` tool. The `execute_raw_query` tool has no such restriction — disable it via `DB_READ_ONLY=true` or use a role without write permissions if you don't need it.
+Only a single SELECT statement is allowed through the `query_data` tool; comments and string literals are parsed before the multi-statement check, so a marker such as `--` inside a string cannot hide a second statement. In read-only mode, volatile functions are rejected as described above. The `execute_raw_query` tool has no such restriction — disable it via `DB_READ_ONLY=true` or use a role without write permissions if you don't need it.
 
 ## Testing
 
